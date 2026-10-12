@@ -4,8 +4,14 @@ A simple, fast viewer for CT, MRI and X-ray images (DICOM), made for MacBooks.
 It runs locally in Safari or Chrome. Your images never leave your computer.
 
 - Scroll through slices with the trackpad, pinch to zoom, drag to pan
-- Brightness / contrast with presets (soft tissue, lung, bone, brain…)
-- Measure distances (mm), angles, and areas with mean / SD of pixel values (HU on CT)
+- Brightness / contrast (window level / width): drag, presets (soft tissue,
+  lung, bone, brain…) or sliders
+- **Two views side by side with reference lines**: e.g. the level of each axial
+  cut drawn on the sagittal image (and the other way round), all levels
+  numbered, double-click a point to find it in the other view, synced
+  scrolling for series in the same plane
+- Measure distances (mm), angles, ratios of two distances, and areas with mean /
+  SD of pixel values (HU on CT)
 - Measurement list, undo, calibration for X-rays
 - Series list with thumbnails, DICOM tag browser, export to PNG
 - Reads compressed images (JPEG Lossless, JPEG, JPEG 2000, RLE) and Japanese
@@ -32,8 +38,8 @@ internet. The first time, right-click **DICOM Viewer.app** and choose **Open**.
 Double-click **DICOM Viewer.app**. Your browser opens the viewer, and the
 small local server stops by itself a few minutes after you close the tab.
 
-Click **Open folder…** and choose the folder with your images, for example a
-copied hospital CD.
+Click **Open folder…** (or **Open files…**) and choose your images, for example
+a copied hospital CD. You can also drag a folder or files onto the window.
 
 **On a copied CD:** put the `dicomreader` folder next to the CD's `DICOMDIR`
 file (or its `DICOM` folder). The viewer then opens those images straight away.
@@ -58,6 +64,10 @@ Alternatives:
 | Distance | **Distance** (M), then drag |
 | Angle | **Angle** (A), then click 3 points (the middle one is the corner) |
 | Area and mean value | **Ellipse** (E) or **Rectangle** (B), then drag |
+| Ratio of two distances | **Ratio** (O), then draw two distances; the panel shows A ÷ B |
+| Brightness / contrast sliders | **Brightness / Contrast** (C) |
+| Two views + reference lines | **2 views** (V). Drag a series from the list onto a view. Tab switches the active view. |
+| Find a point in the other view | Double-click it |
 | Edit / delete a measurement | With a measure tool on, click it: drag its handles, or press Delete. ⌘Z undoes. |
 | Measurement list, calibration | **Measurements** (L) |
 | DICOM tags | **Tags** (T) |
@@ -65,6 +75,15 @@ Alternatives:
 | Smooth / pixel-exact display | G |
 
 Press **?** in the viewer for all shortcuts.
+
+## Reference lines
+
+In **2 views**, each view shows where the other view's current slice cuts it as
+a dashed line, labelled with the slice number. **All levels** (K) also draws
+every slice of the other series as a faint numbered line; click a number to go
+to that slice. Lines are computed from each image's position in the scanner
+(ImagePositionPatient / ImageOrientationPatient) and are only drawn between
+series of the same exam (same frame of reference).
 
 ## Measurement accuracy
 

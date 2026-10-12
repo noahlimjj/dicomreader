@@ -5,7 +5,6 @@ import {walk, withValues, rawValue, decodeIso2022} from './dicom.js';
 dwv.logger.level = dwv.logger.levels.ERROR;
 
 const $ = (id) => document.getElementById(id);
-const GROUP_IDS = ['layerGroup0'];
 const PIXEL_DATA = new dwv.Tag('7FE0', '0010');
 const PROJECTION = ['DX', 'CR', 'MG', 'XA', 'RF', 'IO', 'PX', 'DF', 'RG'];
 
@@ -18,15 +17,28 @@ const TOOLS = {
   Ellipse: {dwv: 'Draw', shape: 'Ellipse'},
   Rectangle: {dwv: 'Draw', shape: 'Rectangle'},
   Arrow: {dwv: 'Draw', shape: 'Arrow'},
+  Ratio: {dwv: 'Draw', shape: 'Ruler'},
 };
+
+// One dwv app per viewport; the second one is used by the 2-view layout.
+const VIEWPORTS = [0, 1].map((index) => ({
+  index,
+  divId: `layerGroup${index}`,
+  app: null,
+  series: -1, // index into state.series
+  loaded: false,
+  flip: false, // dwv index order is the reverse of the instance order
+}));
 
 const state = {
   series: [],
-  current: -1,
+  layout: 1, // number of viewports shown
+  active: 0, // active viewport
+  sync: true, // scroll parallel series together
+  allLevels: loadPref('allLevels', true), // show every slice of the other view as a faint line
+  locator: null, // 3D point picked with a double-click
+  ratio: {a: null, b: null}, // distance annotation uids
   tool: 'WindowLevel',
-  loaded: false,
-  activeGroup: 0,
-  flip: false, // dwv index order is the reverse of the instance order
   sopIndex: new Map(),
   probe: null,
   selected: null, // uid of the selected measurement
@@ -34,8 +46,6 @@ const state = {
   calibrations: loadCalibrations(),
   smooth: loadPref('smooth', true), // interpolated display (looks only, measurements unaffected)
 };
-
-let app = null;
 
 // ---------------------------------------------------------------------------
 // formatting helpers
@@ -163,6 +173,7 @@ function makeItem(name, buffer) {
     thickness: parseFloat(t('00180050')),
     spacing: parseFloat(t('00180088')),
     hasGeometry: numbers(t('00200032')).length === 3 && numbers(t('00200037')).length === 6,
+    frameOfRef: t('00200052'),
     pixelSpacing: ps.length === 2 && ps.every((v) => v > 0) ? ps : null,
     aspectRatio: t('00280034'),
     imagerSpacing: ips.length === 2 && ips.every((v) => v > 0) ? ips : null,
@@ -438,11 +449,7 @@ function bufferFor(s, item, index) {
 }
 
 // ---------------------------------------------------------------------------
-// dwv app
-
-function viewConfigs() {
-  return {'*': [new dwv.ViewConfig(GROUP_IDS[0])]};
-}
+// viewports (one dwv app each)
 
 function toolOptions() {
   return {
@@ -453,7 +460,6 @@ function toolOptions() {
   };
 }
 
-// A new dwv App for every series: App.reset() does not release loaded data.
 function disposeApp(a) {
   if (!a) return;
   a.abortAllLoads();
@@ -462,66 +468,12 @@ function disposeApp(a) {
   a.getToolboxController()?.enableShortcuts(false);
 }
 
-function createApp() {
-  disposeApp(app);
-  state.selected = null;
-  // fresh layer group elements, without any state left by the previous app
-  for (const id of GROUP_IDS) {
-    const old = $(id);
-    const fresh = old.cloneNode(false);
-    fresh.removeAttribute('style');
-    old.replaceWith(fresh);
-  }
-  const a = new dwv.App();
-  const options = new dwv.AppOptions(viewConfigs());
-  options.tools = toolOptions();
-  a.init(options);
+const vp = () => VIEWPORTS[state.active];
+const shown = () => VIEWPORTS.slice(0, state.layout);
+const seriesOf = (v) => state.series[v.series];
 
-  a.addEventListener('loadstart', () => showProgress(0));
-  a.addEventListener('loadprogress', (e) => {
-    if (e.lengthComputable) showProgress(e.loaded / e.total);
-  });
-  a.addEventListener('load', () => {
-    if (a !== app) return;
-    state.loaded = true;
-    onSeriesLoaded();
-  });
-  a.addEventListener('loadend', () => showProgress(null));
-  a.addEventListener('error', (e) => {
-    if (a !== app) return;
-    console.error('dwv error', e.error || e);
-    const msg = (e.error && e.error.message) || 'Could not display this series';
-    if (!msg.startsWith('Render error')) a.abortAllLoads();
-    toast(msg);
-  });
-  for (const type of ['positionchange', 'wlchange', 'colourmapchange', 'zoomchange', 'offsetchange']) {
-    a.addEventListener(type, scheduleUiUpdate);
-  }
-  for (const type of ['annotationadd', 'annotationupdate', 'annotationremove', 'drawcreate', 'drawchange', 'drawdelete']) {
-    a.addEventListener(type, scheduleMeasureUpdate);
-  }
-  a.addEventListener('annotationselect', (e) => {
-    state.selected = e.annotationid;
-    scheduleMeasureUpdate();
-  });
-  window.dwvApp = a; // handy for debugging from the browser console
-  return a;
-}
-
-function groups() {
-  if (!app) return [];
-  const list = [];
-  for (let i = 0; i < GROUP_IDS.length; ++i) {
-    const g = app.getLayerGroupByDivId(GROUP_IDS[i]);
-    if (g) list.push(g);
-  }
-  return list;
-}
-
-function activeGroup() {
-  if (!app) return undefined;
-  return app.getLayerGroupByDivId(GROUP_IDS[state.activeGroup]) ||
-    app.getLayerGroupByDivId(GROUP_IDS[0]);
+function groupOf(v) {
+  return v && v.app ? v.app.getLayerGroupByDivId(v.divId) : undefined;
 }
 
 // image layer of a group (while a draw tool is active the draw layer is the
@@ -536,27 +488,70 @@ function viewController(group) {
   return vl ? vl.getViewController() : undefined;
 }
 
-function cross(a, b) {
-  return [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
+const vcOf = (v) => viewController(groupOf(v));
+
+// A new dwv app for every series: App.reset() does not release loaded data.
+function createApp(v) {
+  disposeApp(v.app);
+  // fresh layer group element, without any state left by the previous app
+  const old = $(v.divId);
+  const fresh = old.cloneNode(false);
+  fresh.removeAttribute('style');
+  old.replaceWith(fresh);
+
+  const a = new dwv.App();
+  const options = new dwv.AppOptions({'*': [new dwv.ViewConfig(v.divId)]});
+  options.tools = toolOptions();
+  a.init(options);
+  const mine = () => v.app === a;
+
+  a.addEventListener('loadstart', () => mine() && showProgress(0));
+  a.addEventListener('loadprogress', (e) => {
+    if (mine() && e.lengthComputable) showProgress(e.loaded / e.total);
+  });
+  a.addEventListener('load', () => {
+    if (!mine()) return;
+    v.loaded = true;
+    onSeriesLoaded(v);
+  });
+  a.addEventListener('loadend', () => mine() && showProgress(null));
+  a.addEventListener('error', (e) => {
+    if (!mine()) return;
+    console.error('dwv error', e.error || e);
+    const msg = (e.error && e.error.message) || 'Could not display this series';
+    if (!msg.startsWith('Render error')) a.abortAllLoads();
+    toast(msg);
+  });
+  a.addEventListener('positionchange', () => {
+    if (!mine()) return;
+    onPositionChange(v);
+    scheduleUiUpdate();
+  });
+  for (const type of ['wlchange', 'colourmapchange', 'zoomchange', 'offsetchange']) {
+    a.addEventListener(type, () => mine() && scheduleUiUpdate());
+  }
+  for (const type of ['annotationadd', 'annotationupdate', 'annotationremove']) {
+    a.addEventListener(type, () => mine() && scheduleMeasureUpdate());
+  }
+  a.addEventListener('annotationselect', (e) => {
+    state.selected = e.annotationid;
+    scheduleMeasureUpdate();
+  });
+  if (v.index === 0) window.dwvApp = a; // handy for debugging from the browser console
+  window.viewer = {viewports: VIEWPORTS, state, currentItem, viewLayer, groupOf};
+  return a;
 }
 
-function dot(a, b) {
-  return a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
-}
-
-function loadSeries(index) {
+function loadSeries(index, v = vp()) {
   const s = state.series[index];
   if (!s) return;
-  state.current = index;
-  state.loaded = false;
-  state.flip = false;
-  state.activeGroup = 0;
+  stopPlay(v);
+  v.series = index;
+  v.loaded = false;
+  v.flip = false;
   state.probe = null;
-  app = createApp();
-  for (const b of document.querySelectorAll('.series')) {
-    b.classList.toggle('active', b.dataset.index === String(index));
-  }
-  document.querySelector('.series.active')?.scrollIntoView({block: 'nearest'});
+  v.app = createApp(v);
+  markSeriesList();
   updateButtons();
   updateUi();
   renderMeasurements();
@@ -568,35 +563,306 @@ function loadSeries(index) {
     toast(e.message);
     return;
   }
-  app.loadImageObject(data);
+  v.app.loadImageObject(data);
 }
 
-function onSeriesLoaded() {
-  const s = state.series[state.current];
-  app.setActiveLayerGroup(state.activeGroup);
-  // number images in acquisition (instance) order and start at the first one
-  const g = activeGroup();
+function onSeriesLoaded(v) {
+  const s = seriesOf(v);
+  const g = groupOf(v);
   const vc = viewController(g);
   const ph = g && g.getPositionHelper();
+  // number images in acquisition (instance) order and start at the first one
   if (vc && ph && ph.getMaximumScrollValue() > 0 && s.items.length > 1) {
     const first = vc.getOriginForImageUid(s.items[0].sop);
     const last = vc.getOriginForImageUid(s.items[s.items.length - 1].sop);
     const p0 = ph.getCurrentPositionAtScrollValue(0).getValues();
     const dist = (o) => (o ? Math.hypot(o.getX() - p0[0], o.getY() - p0[1], o.getZ() - p0[2]) : Infinity);
-    state.flip = dist(first) > dist(last);
-    setSliceIndex(state.flip ? ph.getMaximumScrollValue() : 0, g);
+    v.flip = dist(first) > dist(last);
+    setSliceIndex(v.flip ? ph.getMaximumScrollValue() : 0, v);
   }
-  app.setImageSmoothing(state.smooth);
-  setTool(state.tool);
-  fillPresets();
+  v.app.setImageSmoothing(state.smooth);
+  applyTool(v);
+  // a second view starts at the level of the first one when they are parallel
+  const other = otherViewport(v);
+  if (other && other.loaded) syncFrom(other, true);
+  if (v === vp()) fillPresets();
   updateButtons();
   updateUi();
   renderMeasurements();
   queueThumbnails();
 }
 
+// refit the images once the browser has laid out the new view sizes
+function fitViews() {
+  requestAnimationFrame(() => {
+    for (const v of shown()) {
+      if (v.loaded) v.app.onResize();
+    }
+    updateOverlays();
+  });
+}
+
+function otherViewport(v) {
+  return state.layout === 2 ? VIEWPORTS[1 - v.index] : null;
+}
+
+function setActive(index) {
+  if (index === state.active || index >= state.layout) return;
+  state.active = index;
+  for (const v of VIEWPORTS) $(v.divId).classList.toggle('active', state.layout === 2 && v.index === index);
+  markSeriesList();
+  fillPresets();
+  updateButtons();
+  updateUi();
+  renderMeasurements();
+}
+
+function setLayout(n) {
+  if (n === state.layout) return;
+  state.layout = n;
+  $('viewers').classList.toggle('two', n === 2);
+  if (n === 1) {
+    disposeApp(VIEWPORTS[1].app);
+    Object.assign(VIEWPORTS[1], {app: null, series: -1, loaded: false});
+    state.active = 0;
+    state.locator = null;
+  } else if (VIEWPORTS[0].series >= 0) {
+    loadSeries(companionSeries(VIEWPORTS[0].series), VIEWPORTS[1]);
+  }
+  for (const v of VIEWPORTS) $(v.divId).classList.toggle('active', n === 2 && v.index === state.active);
+  fitViews();
+  markSeriesList();
+  updateButtons();
+  updateUi();
+  renderMeasurements();
+}
+
+// The best series to show next to another one: same patient space (frame of
+// reference) in a different plane, e.g. sagittal next to axial.
+function companionSeries(index) {
+  const s = state.series[index];
+  const n = imageNormal(s.first);
+  let best = -1;
+  let bestScore = -Infinity;
+  state.series.forEach((c, i) => {
+    if (i === index) return;
+    let score = 0;
+    if (c.first.studyUid === s.first.studyUid) score += 1;
+    if (s.first.frameOfRef && c.first.frameOfRef === s.first.frameOfRef) score += 2;
+    const m = imageNormal(c.first);
+    if (n && m && Math.abs(dot(n, m)) < 0.5) score += 4; // different plane
+    if (c.first.modality === s.first.modality) score += 1;
+    if (c.isReference) score -= 5;
+    score += Math.min(c.images, 100) / 1000;
+    if (score > bestScore) {
+      bestScore = score;
+      best = i;
+    }
+  });
+  return best >= 0 ? best : index;
+}
+
+// ---------------------------------------------------------------------------
+// geometry of the image shown in a viewport (original file values)
+
+function cross(a, b) {
+  return [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
+}
+
+function dot(a, b) {
+  return a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+}
+
+function imageNormal(it) {
+  return it && it.hasGeometry ? cross(it.iop.slice(0, 3), it.iop.slice(3, 6)) : null;
+}
+
+function currentItem(v = vp()) {
+  const vc = vcOf(v);
+  if (!vc) return undefined;
+  try {
+    return state.sopIndex.get(vc.getCurrentImageUid());
+  } catch {
+    return undefined;
+  }
+}
+
+// plane of an item in patient space, or null
+function planeOf(it) {
+  if (!it || !it.hasGeometry || !it.pixelSpacing) return null;
+  const row = it.iop.slice(0, 3);
+  const col = it.iop.slice(3, 6);
+  return {
+    it,
+    origin: it.ipp,
+    row,
+    col,
+    normal: cross(row, col),
+    rowSpacing: it.pixelSpacing[0], // between rows (along col)
+    colSpacing: it.pixelSpacing[1], // between columns (along row)
+    frame: it.frameOfRef,
+  };
+}
+
+const sameSpace = (p, q) => p && q && p.frame && p.frame === q.frame;
+
+// pixel (x = column, y = row; pixel centres at integers) -> patient point
+function pixelToPatient(p, x, y) {
+  return [0, 1, 2].map((k) => p.origin[k] + x * p.colSpacing * p.row[k] + y * p.rowSpacing * p.col[k]);
+}
+
+// patient point -> pixel coordinates in plane p, and distance to the plane
+function patientToPixel(p, point) {
+  const d = [0, 1, 2].map((k) => point[k] - p.origin[k]);
+  return {x: dot(d, p.row) / p.colSpacing, y: dot(d, p.col) / p.rowSpacing, dist: dot(d, p.normal)};
+}
+
+// Segment (in pixel coordinates of plane p) where plane q cuts the image of p.
+function intersection(p, q) {
+  const it = p.it;
+  const a = dot(q.normal, p.row) * p.colSpacing;
+  const b = dot(q.normal, p.col) * p.rowSpacing;
+  const c = dot(q.normal, [0, 1, 2].map((k) => p.origin[k] - q.origin[k]));
+  if (Math.hypot(a / p.colSpacing, b / p.rowSpacing) < 0.2) return null; // (nearly) parallel planes
+  // a*x + b*y + c = 0, clipped to the image rectangle
+  const x0 = -0.5;
+  const x1 = it.cols - 0.5;
+  const y0 = -0.5;
+  const y1 = it.rows - 0.5;
+  const pts = [];
+  if (Math.abs(b) > 1e-9) {
+    for (const x of [x0, x1]) {
+      const y = -(a * x + c) / b;
+      if (y >= y0 - 1e-6 && y <= y1 + 1e-6) pts.push([x, y]);
+    }
+  }
+  if (Math.abs(a) > 1e-9) {
+    for (const y of [y0, y1]) {
+      const x = -(b * y + c) / a;
+      if (x >= x0 - 1e-6 && x <= x1 + 1e-6) pts.push([x, y]);
+    }
+  }
+  if (pts.length < 2) return null;
+  // farthest pair (corners can produce duplicates)
+  let best = [pts[0], pts[1]];
+  let bestD = -1;
+  for (let i = 0; i < pts.length; ++i) {
+    for (let j = i + 1; j < pts.length; ++j) {
+      const d = Math.hypot(pts[i][0] - pts[j][0], pts[i][1] - pts[j][1]);
+      if (d > bestD) {
+        bestD = d;
+        best = [pts[i], pts[j]];
+      }
+    }
+  }
+  return bestD > 0.5 ? best : null;
+}
+
+// pixel coordinates of the shown image -> position inside the viewport div.
+// dwv's planePosToDisplay() gives up outside the canvas, so use the (linear)
+// inverse of displayToPlanePos(), which works everywhere.
+function pixelToScreen(v, x, y) {
+  const vl = viewLayer(groupOf(v));
+  if (!vl) return null;
+  const p0 = vl.displayToPlanePos(new dwv.Point2D(0, 0));
+  const p1 = vl.displayToPlanePos(new dwv.Point2D(100, 100));
+  const sx = (p1.getX() - p0.getX()) / 100;
+  const sy = (p1.getY() - p0.getY()) / 100;
+  if (!sx || !sy) return null;
+  // dwv plane positions have the pixel centres at +0.5
+  return {x: (x + 0.5 - p0.getX()) / sx, y: (y + 0.5 - p0.getY()) / sy};
+}
+
+function screenToPixel(v, clientX, clientY) {
+  const vl = viewLayer(groupOf(v));
+  if (!vl) return null;
+  const rect = $(v.divId).getBoundingClientRect();
+  const pp = vl.displayToPlanePos(new dwv.Point2D(clientX - rect.left, clientY - rect.top));
+  return {x: pp.getX() - 0.5, y: pp.getY() - 0.5};
+}
+
+// index (acquisition order) of the slice of v's series closest to a point
+function nearestSlice(v, point) {
+  const s = seriesOf(v);
+  if (!s) return -1;
+  let best = -1;
+  let bestD = Infinity;
+  s.items.forEach((it, i) => {
+    const p = planeOf(it);
+    if (!p) return;
+    const d = Math.abs(patientToPixel(p, point).dist);
+    if (d < bestD) {
+      bestD = d;
+      best = i;
+    }
+  });
+  const thick = s.first.thickness || s.first.spacing || 5;
+  return bestD <= Math.max(thick, 5) ? best : -1;
+}
+
+let syncing = false;
+function onPositionChange(v) {
+  if (syncing || !state.sync) return;
+  const w = otherViewport(v);
+  if (w && w.loaded) syncFrom(v);
+}
+
+// move the other viewport to the same level when both show parallel planes
+function syncFrom(v, force = false) {
+  const w = otherViewport(v);
+  if (!w || !w.loaded || !v.loaded || (!state.sync && !force)) return;
+  const p = planeOf(currentItem(v));
+  const q = planeOf(currentItem(w));
+  if (!sameSpace(p, q) || Math.abs(dot(p.normal, q.normal)) < 0.98) return;
+  const centre = pixelToPatient(p, (p.it.cols - 1) / 2, (p.it.rows - 1) / 2);
+  const idx = nearestSlice(w, centre);
+  if (idx < 0) return;
+  syncing = true;
+  try {
+    goToImage(idx, w);
+  } finally {
+    syncing = false;
+  }
+}
+
+// double-click: show this point in the other view
+function locate(v, clientX, clientY) {
+  const p = planeOf(currentItem(v));
+  const px = screenToPixel(v, clientX, clientY);
+  if (!p || !px) return;
+  const point = pixelToPatient(p, px.x, px.y);
+  state.locator = {point, frame: p.frame};
+  const w = otherViewport(v);
+  if (w && w.loaded) {
+    const q = planeOf(currentItem(w));
+    if (sameSpace(p, q)) {
+      const idx = nearestSlice(w, point);
+      if (idx >= 0) {
+        syncing = true;
+        try {
+          goToImage(idx, w);
+        } finally {
+          syncing = false;
+        }
+      } else {
+        toast('That point is outside the other series.');
+      }
+    } else if (q) {
+      toast('The two series are not in the same patient coordinates.');
+    }
+  }
+  scheduleUiUpdate();
+}
+
 // ---------------------------------------------------------------------------
 // tools & actions
+
+function applyTool(v) {
+  if (!v.loaded) return;
+  const t = TOOLS[state.tool];
+  v.app.setTool(t.dwv);
+  if (t.shape) v.app.setToolFeatures({shapeName: t.shape});
+}
 
 function setTool(name) {
   if (!TOOLS[name]) return;
@@ -604,17 +870,14 @@ function setTool(name) {
   for (const b of document.querySelectorAll('[data-tool]')) {
     b.classList.toggle('active', b.dataset.tool === name);
   }
-  if (!state.loaded) return;
-  const t = TOOLS[name];
-  app.setTool(t.dwv);
-  if (t.shape) app.setToolFeatures({shapeName: t.shape});
+  for (const v of shown()) applyTool(v);
   $('viewers').dataset.tool = name;
 }
 
 function fillPresets() {
   const sel = $('presetSelect');
   sel.innerHTML = '';
-  const vc = viewController(activeGroup());
+  const vc = vcOf(vp());
   if (!vc || !vc.canWindowLevel()) {
     sel.disabled = true;
     return;
@@ -646,7 +909,7 @@ function presetLabel(name) {
 }
 
 function syncPresetSelect() {
-  const vc = viewController(activeGroup());
+  const vc = vcOf(vp());
   const sel = $('presetSelect');
   if (!vc || sel.disabled) return;
   const name = vc.getCurrentWindowPresetName();
@@ -660,119 +923,166 @@ function syncPresetSelect() {
 }
 
 function applyPreset(name) {
-  for (const g of groups()) {
-    const vc = viewController(g);
-    if (vc && vc.getWindowLevelPresetsNames().includes(name)) vc.setWindowLevelPreset(name);
-  }
+  const vc = vcOf(vp());
+  if (vc && vc.getWindowLevelPresetsNames().includes(name)) vc.setWindowLevelPreset(name);
 }
 
 function toggleInvert() {
-  for (const g of groups()) {
-    const vc = viewController(g);
-    if (!vc || !vc.isMonochrome()) continue;
-    vc.setColourMap(vc.getColourMap() === 'invPlain' ? 'plain' : 'invPlain');
-  }
+  const vc = vcOf(vp());
+  if (!vc || !vc.isMonochrome()) return;
+  vc.setColourMap(vc.getColourMap() === 'invPlain' ? 'plain' : 'invPlain');
   updateButtons();
 }
 
 function resetView() {
-  stopPlay();
-  if (!app) return;
-  app.resetZoomPan();
-  for (const g of groups()) {
-    const vc = viewController(g);
-    if (vc) vc.resetWindowLevel();
-  }
+  const v = vp();
+  stopPlay(v);
+  if (!v.loaded) return;
+  v.app.resetZoomPan();
+  vcOf(v)?.resetWindowLevel();
   updateUi();
 }
 
 function togglePlay() {
-  const vc = viewController(activeGroup());
-  if (!vc || !activeGroup().canScroll()) return;
+  const v = vp();
+  const vc = vcOf(v);
+  if (!vc || !groupOf(v).canScroll()) return;
   if (vc.isPlaying()) vc.stop(); else vc.play();
   updateButtons();
 }
 
-function stopPlay() {
-  for (const g of groups()) {
-    const vc = viewController(g);
-    if (vc && vc.isPlaying()) vc.stop();
-  }
+function stopPlay(v = vp()) {
+  const vc = vcOf(v);
+  if (vc && vc.isPlaying()) vc.stop();
   updateButtons();
 }
 
-function flipFor(group) {
-  return state.flip && group === activeGroup();
-}
-
 // delta in acquisition order (+1 = next image)
-function scrollBy(delta, group = activeGroup()) {
-  if (!group || !state.loaded) return;
-  const ph = group.getPositionHelper();
+function scrollBy(delta, v = vp()) {
+  const g = groupOf(v);
+  const ph = v.loaded && g && g.getPositionHelper();
   if (!ph) return;
-  if (flipFor(group)) delta = -delta;
-  setSliceIndex(ph.getCurrentPositionScrollValue() + delta, group);
+  if (v.flip) delta = -delta;
+  setSliceIndex(ph.getCurrentPositionScrollValue() + delta, v);
 }
 
-function setSliceIndex(value, group = activeGroup()) {
-  const ph = group && group.getPositionHelper();
-  if (!ph) return;
-  const max = ph.getMaximumScrollValue();
-  const v = Math.max(0, Math.min(max, Math.round(value)));
-  if (v === ph.getCurrentPositionScrollValue()) return;
-  ph.setCurrentPosition(ph.getCurrentPositionAtScrollValue(v));
-}
-
-// 0-based image number in acquisition order
-function displayIndex(group) {
-  const ph = group.getPositionHelper();
-  const max = ph.getMaximumScrollValue();
-  const cur = ph.getCurrentPositionScrollValue();
-  return {cur: flipFor(group) ? max - cur : cur, max};
-}
-
-function goToImage(n) {
-  const g = activeGroup();
+function setSliceIndex(value, v = vp()) {
+  const g = groupOf(v);
   const ph = g && g.getPositionHelper();
   if (!ph) return;
   const max = ph.getMaximumScrollValue();
-  setSliceIndex(flipFor(g) ? max - n : n, g);
+  const k = Math.max(0, Math.min(max, Math.round(value)));
+  if (k === ph.getCurrentPositionScrollValue()) return;
+  ph.setCurrentPosition(ph.getCurrentPositionAtScrollValue(k));
+}
+
+// 0-based image number in acquisition order
+function displayIndex(v) {
+  const ph = groupOf(v).getPositionHelper();
+  const max = ph.getMaximumScrollValue();
+  const cur = ph.getCurrentPositionScrollValue();
+  return {cur: v.flip ? max - cur : cur, max};
+}
+
+function goToImage(n, v = vp()) {
+  const g = groupOf(v);
+  const ph = g && g.getPositionHelper();
+  if (!ph) return;
+  const max = ph.getMaximumScrollValue();
+  setSliceIndex(v.flip ? max - n : n, v);
+}
+
+// ---------------------------------------------------------------------------
+// brightness / contrast (window level / width)
+
+function wlRange(vc) {
+  const r = vc.getImageRescaledDataRange();
+  const span = Math.max(1, r.max - r.min);
+  return {min: r.min, max: r.max, span};
+}
+
+function updateWlPanel() {
+  if ($('wlPanel').hidden) return;
+  const vc = vcOf(vp());
+  const ok = !!vc && vc.canWindowLevel();
+  for (const id of ['wlBrightness', 'wlContrast', 'wlLevel', 'wlWidth']) $(id).disabled = !ok;
+  if (!ok) return;
+  const {min, max, span} = wlRange(vc);
+  const wl = vc.getWindowLevel();
+  // brightness: right = brighter = lower window level
+  const b = $('wlBrightness');
+  b.min = String(-max);
+  b.max = String(-min);
+  b.step = String(span / 1000);
+  if (document.activeElement !== b) b.value = String(-wl.center);
+  // contrast: right = more contrast = narrower window, on a log scale
+  const c = $('wlContrast');
+  const maxW = span * 2;
+  if (document.activeElement !== c) c.value = String(1 - Math.log(Math.max(1, wl.width)) / Math.log(maxW));
+  if (document.activeElement !== $('wlLevel')) $('wlLevel').value = String(Math.round(wl.center));
+  if (document.activeElement !== $('wlWidth')) $('wlWidth').value = String(Math.round(wl.width));
+}
+
+function setWindow(center, width) {
+  const vc = vcOf(vp());
+  if (!vc || !vc.canWindowLevel() || !Number.isFinite(center) || !(width >= 1)) return;
+  vc.setWindowLevel(new dwv.WindowLevel(center, width));
+}
+
+function onWlInput(e) {
+  const vc = vcOf(vp());
+  if (!vc) return;
+  const wl = vc.getWindowLevel();
+  const {span} = wlRange(vc);
+  if (e.target.id === 'wlBrightness') setWindow(-parseFloat(e.target.value), wl.width);
+  if (e.target.id === 'wlContrast') setWindow(wl.center, Math.exp((1 - parseFloat(e.target.value)) * Math.log(span * 2)));
+  if (e.target.id === 'wlLevel') setWindow(parseFloat(e.target.value), wl.width);
+  if (e.target.id === 'wlWidth') setWindow(wl.center, parseFloat(e.target.value));
+}
+
+function toggleWlPanel() {
+  $('wlPanel').hidden = !$('wlPanel').hidden;
+  $('wlBtn').classList.toggle('on', !$('wlPanel').hidden);
+  updateWlPanel();
 }
 
 // ---------------------------------------------------------------------------
 // measurements
 
-function drawLayers() {
-  if (!app || !state.loaded) return [];
+function drawLayers(v) {
+  if (!v || !v.loaded) return [];
   try {
-    return app.getDrawLayers();
+    return v.app.getDrawLayers();
   } catch {
     return [];
   }
 }
 
-function annotations() {
+function annotations(v = vp()) {
   const list = [];
   const seen = new Set();
-  for (const layer of drawLayers()) {
+  for (const layer of drawLayers(v)) {
     const group = layer.getDrawController().getAnnotationGroup();
     for (const a of group.getList()) {
       if (seen.has(a.trackingUid)) continue;
       seen.add(a.trackingUid);
-      list.push({annotation: a, layer});
+      list.push({annotation: a, layer, v});
     }
   }
   return list;
 }
 
-function describe(a) {
+function unitLabel(u) {
+  return u === 'unit.mm' ? 'mm' : u === 'unit.cm2' ? 'cm²' : u === 'unit.degree' ? '°' : 'px';
+}
+
+function describe(a, v) {
   const q = a.quantification || {};
-  const unit = (u) => (u === 'unit.mm' ? 'mm' : u === 'unit.cm2' ? 'cm²' : u === 'unit.degree' ? '°' : 'px');
   const rows = [];
   let kind = 'Arrow';
   if (q.length) {
     kind = 'Distance';
-    const u = unit(q.length.unit);
+    const u = unitLabel(q.length.unit);
     rows.push([`${fmt(q.length.value, u === 'mm' ? 2 : 1)} ${u}`, true]);
   }
   if (q.angle) {
@@ -781,12 +1091,12 @@ function describe(a) {
   }
   if (q.surface) {
     kind = q.a ? 'Ellipse' : q.radius ? 'Circle' : 'Rectangle';
-    const u = unit(q.surface.unit);
+    const u = unitLabel(q.surface.unit);
     rows.push([`Area ${fmt(q.surface.value, 2)} ${u}`, true]);
-    if (q.a && q.b) rows.push([`Axes ${fmt(q.a.value * 2, 1)} × ${fmt(q.b.value * 2, 1)} ${unit(q.a.unit)}`]);
-    if (q.width && q.height) rows.push([`${fmt(q.width.value, 1)} × ${fmt(q.height.value, 1)} ${unit(q.width.unit)}`]);
+    if (q.a && q.b) rows.push([`Axes ${fmt(q.a.value * 2, 1)} × ${fmt(q.b.value * 2, 1)} ${unitLabel(q.a.unit)}`]);
+    if (q.width && q.height) rows.push([`${fmt(q.width.value, 1)} × ${fmt(q.height.value, 1)} ${unitLabel(q.width.unit)}`]);
   }
-  const pu = state.series[state.current]?.first.modality === 'CT' ? ' HU' : '';
+  const pu = seriesOf(v)?.first.modality === 'CT' ? ' HU' : '';
   if (q.mean) rows.push([`Mean ${fmt(q.mean.value, 1)}${pu} · SD ${fmt(q.stdDev?.value, 1)}`]);
   if (q.min && q.max) rows.push([`Min ${fmt(q.min.value, 0)} · Max ${fmt(q.max.value, 0)}${pu}`]);
   return {kind, rows};
@@ -802,49 +1112,76 @@ function scheduleMeasureUpdate() {
   }, 60);
 }
 
+// numbered measurements of all shown viewports
+function allMeasurements() {
+  const out = [];
+  for (const v of shown()) {
+    annotations(v).forEach((m, i) => out.push({...m, number: i + 1}));
+  }
+  return out;
+}
+
+function measureLabel(m) {
+  return state.layout === 2 ? `View ${m.v.index + 1} · #${m.number}` : `#${m.number}`;
+}
+
 function renderMeasurements() {
-  const s = state.series[state.current];
+  const v = vp();
+  const s = seriesOf(v);
   const box = $('measureList');
   const calBox = $('calibration');
   if (!s) {
     box.innerHTML = '';
     calBox.innerHTML = '';
+    $('ratioBox').hidden = true;
+    $('measureCount').textContent = '';
     return;
   }
   const info = spacingInfo(s);
   const sp = info.spacing;
   calBox.className = `calibration cal-${info.kind}`;
   calBox.innerHTML = `
+    ${state.layout === 2 ? `<div class="muted">View ${v.index + 1}: ${escapeHtml(s.title)}</div>` : ''}
     <div><b>Scale:</b> ${sp ? `${fmt(sp[1], 4)} × ${fmt(sp[0], 4)} mm per pixel` : 'unknown'}</div>
     <div class="muted">${escapeHtml(info.label)}</div>`;
 
-  const list = annotations();
-  $('measureCount').textContent = list.length ? `(${list.length})` : '';
-  if (!list.length) {
+  const all = allMeasurements();
+  $('measureCount').textContent = all.length ? `(${all.length})` : '';
+  box.innerHTML = '';
+  if (!all.length) {
     box.innerHTML = `<div class="muted hint">Pick <b>Distance</b>, <b>Angle</b>, <b>Ellipse</b> or
       <b>Rectangle</b> above and drag on the image. Click a measurement to move its end points,
       press Delete to remove it.</div>`;
-  } else {
-    box.innerHTML = '';
-    list.forEach(({annotation: a}, i) => {
-      const {kind, rows} = describe(a);
-      const item = document.createElement('div');
-      item.className = 'measure' + (a.trackingUid === state.selected ? ' selected' : '');
-      const where = imageNumberFor(a);
-      item.innerHTML = `
-        <div class="measure-head"><span>${i + 1}. ${kind}${where ? ` <span class="muted">· image ${where}</span>` : ''}</span>
-          <button class="icon" title="Delete">✕</button></div>
-        ${rows.map(([t, big]) => `<div class="${big ? 'measure-value' : 'muted'}">${escapeHtml(t)}</div>`).join('')}`;
-      item.querySelector('button').addEventListener('click', (e) => {
-        e.stopPropagation();
-        deleteAnnotation(a.trackingUid);
-      });
-      item.addEventListener('click', () => showAnnotation(a));
-      box.appendChild(item);
-    });
   }
+  let lastView = -1;
+  for (const m of all) {
+    if (state.layout === 2 && m.v.index !== lastView) {
+      lastView = m.v.index;
+      const head = document.createElement('div');
+      head.className = 'measure-group muted';
+      head.textContent = `View ${m.v.index + 1} · ${seriesOf(m.v)?.title || ''}`;
+      box.appendChild(head);
+    }
+    const a = m.annotation;
+    const {kind, rows} = describe(a, m.v);
+    const item = document.createElement('div');
+    item.className = 'measure' + (a.trackingUid === state.selected ? ' selected' : '');
+    const where = imageNumberFor(a, m.v);
+    item.innerHTML = `
+      <div class="measure-head"><span>${m.number}. ${kind}${where ? ` <span class="muted">· image ${where}</span>` : ''}</span>
+        <button class="icon" title="Delete">✕</button></div>
+      ${rows.map(([t, big]) => `<div class="${big ? 'measure-value' : 'muted'}">${escapeHtml(t)}</div>`).join('')}`;
+    item.querySelector('button').addEventListener('click', (e) => {
+      e.stopPropagation();
+      deleteAnnotation(a.trackingUid, m.v);
+    });
+    item.addEventListener('click', () => showAnnotation(a, m.v));
+    box.appendChild(item);
+  }
+  renderRatio(all);
 
-  // calibration controls
+  // calibration controls (active view)
+  const list = annotations(v);
   const lastDistance = [...list].reverse().find(({annotation: a}) => a.quantification?.length);
   const canCal = info.kind !== 'patient' || state.calibrations[s.key];
   $('calForm').hidden = !canCal;
@@ -855,25 +1192,61 @@ function renderMeasurements() {
   $('calReset').hidden = !state.calibrations[s.key];
 }
 
-function imageNumberFor(a) {
-  const s = state.series[state.current];
+// ratio of two distances (e.g. canal / vertebral body). Magnification and
+// calibration cancel out, so this is exact on X-rays too.
+function renderRatio(all) {
+  const distances = all.filter((m) => m.annotation.quantification?.length);
+  const box = $('ratioBox');
+  box.hidden = distances.length < 2;
+  if (box.hidden) return;
+  const uids = distances.map((m) => m.annotation.trackingUid);
+  let {a, b} = state.ratio;
+  if (!uids.includes(a) || !uids.includes(b) || a === b) {
+    a = uids[uids.length - 2];
+    b = uids[uids.length - 1];
+    state.ratio = {a, b};
+  }
+  for (const [id, value] of [['ratioA', a], ['ratioB', b]]) {
+    const sel = $(id);
+    sel.innerHTML = distances.map((m) => {
+      const q = m.annotation.quantification.length;
+      return `<option value="${m.annotation.trackingUid}">${escapeHtml(measureLabel(m))} · ${fmt(q.value, 2)} ${unitLabel(q.unit)}</option>`;
+    }).join('');
+    sel.value = value;
+  }
+  const qa = distances.find((m) => m.annotation.trackingUid === a).annotation.quantification.length;
+  const qb = distances.find((m) => m.annotation.trackingUid === b).annotation.quantification.length;
+  const out = $('ratioValue');
+  if (qa.unit !== qb.unit) {
+    out.textContent = 'Different units (mm and px): calibrate first';
+  } else if (!(qb.value > 0) || !(qa.value > 0)) {
+    out.textContent = '–';
+  } else {
+    out.innerHTML = `<span class="measure-value">${fmt(qa.value / qb.value, 3)}</span>
+      <span class="muted"> (B ÷ A = ${fmt(qb.value / qa.value, 3)})</span>`;
+  }
+}
+
+function imageNumberFor(a, v) {
+  const s = seriesOf(v);
   if (!s || !a.referencedSopInstanceUID) return '';
   const idx = s.items.findIndex((it) => it.sop === a.referencedSopInstanceUID);
   return idx >= 0 && s.items.length > 1 ? String(idx + 1) : '';
 }
 
-function showAnnotation(a) {
-  const s = state.series[state.current];
+function showAnnotation(a, v) {
+  const s = seriesOf(v);
   if (!s) return;
+  setActive(v.index);
   const idx = s.items.findIndex((it) => it.sop === a.referencedSopInstanceUID);
-  if (idx >= 0) goToImage(idx);
+  if (idx >= 0) goToImage(idx, v);
 }
 
-function deleteAnnotation(uid) {
-  for (const layer of drawLayers()) {
+function deleteAnnotation(uid, v = vp()) {
+  for (const layer of drawLayers(v)) {
     const dc = layer.getDrawController();
     if (dc.getAnnotation(uid)) {
-      dc.removeAnnotationWithCommand(uid, app.addToUndoStack); // undo with ⌘Z
+      dc.removeAnnotationWithCommand(uid, v.app.addToUndoStack); // undo with ⌘Z
       layer.draw?.();
     }
   }
@@ -881,18 +1254,27 @@ function deleteAnnotation(uid) {
 }
 
 function clearMeasures() {
-  for (const layer of drawLayers()) {
-    const dc = layer.getDrawController();
-    for (const a of [...dc.getAnnotationGroup().getList()]) dc.removeAnnotationWithCommand(a.trackingUid, app.addToUndoStack);
-    layer.draw?.();
+  for (const v of shown()) {
+    for (const layer of drawLayers(v)) {
+      const dc = layer.getDrawController();
+      for (const a of [...dc.getAnnotationGroup().getList()]) dc.removeAnnotationWithCommand(a.trackingUid, v.app.addToUndoStack);
+      layer.draw?.();
+    }
   }
   scheduleMeasureUpdate();
 }
 
+function reloadSeriesEverywhere(index) {
+  for (const v of shown()) {
+    if (v.series === index) loadSeries(index, v);
+  }
+}
+
 function applyCalibration() {
-  const s = state.series[state.current];
+  const v = vp();
+  const s = seriesOf(v);
   const real = parseFloat($('calInput').value.replace(',', '.'));
-  const list = annotations();
+  const list = annotations(v);
   const last = [...list].reverse().find(({annotation: a}) => a.quantification?.length);
   if (!s || !last) return;
   if (!(real > 0)) {
@@ -910,15 +1292,16 @@ function applyCalibration() {
   saveCalibrations();
   $('calInput').value = '';
   toast(`Calibrated: ${state.calibrations[s.key].note}. Measurements were reset.`);
-  loadSeries(state.current);
+  reloadSeriesEverywhere(v.series);
 }
 
 function resetCalibration() {
-  const s = state.series[state.current];
+  const v = vp();
+  const s = seriesOf(v);
   if (!s) return;
   delete state.calibrations[s.key];
   saveCalibrations();
-  loadSeries(state.current);
+  reloadSeriesEverywhere(v.series);
 }
 
 // ---------------------------------------------------------------------------
@@ -938,41 +1321,33 @@ function updateUi() {
   updateOverlays();
   updateSlider();
   syncPresetSelect();
+  updateWlPanel();
   if (state.panel === 'tags') renderTags();
 }
 
 function updateSlider() {
-  const g = activeGroup();
-  const ph = g && state.loaded && g.getPositionHelper();
+  const v = vp();
+  const g = groupOf(v);
+  const ph = v.loaded && g && g.getPositionHelper();
   const slider = $('sliceSlider');
   if (!ph) {
     slider.disabled = true;
     $('sliceLabel').textContent = '';
     return;
   }
-  const {cur, max} = displayIndex(g);
+  const {cur, max} = displayIndex(v);
   slider.max = String(max);
   slider.value = String(cur);
   slider.disabled = max < 1;
-  $('sliceLabel').textContent = `${cur + 1} / ${max + 1}`;
-}
-
-function currentItem(group = activeGroup()) {
-  const vc = viewController(group);
-  if (!vc) return undefined;
-  try {
-    return state.sopIndex.get(vc.getCurrentImageUid());
-  } catch {
-    return undefined;
-  }
+  $('sliceLabel').textContent = `${state.layout === 2 ? `View ${v.index + 1}: ` : ''}${cur + 1} / ${max + 1}`;
 }
 
 // orientation letters for a patient space direction (LPS)
-function directionLetters(v) {
+function directionLetters(dir) {
   const parts = [
-    [v[0], 'L', 'R'],
-    [v[1], 'P', 'A'],
-    [v[2], 'S', 'I'],
+    [dir[0], 'L', 'R'],
+    [dir[1], 'P', 'A'],
+    [dir[2], 'S', 'I'],
   ].filter(([c]) => Math.abs(c) > 0.3).sort((a, b) => Math.abs(b[0]) - Math.abs(a[0]));
   return parts.map(([c, pos, neg]) => (c > 0 ? pos : neg)).join('');
 }
@@ -981,20 +1356,18 @@ const PO_OPPOSITE = {L: 'R', R: 'L', A: 'P', P: 'A', H: 'F', F: 'H', S: 'I', I: 
 
 // The image is shown as stored (see bufferFor), so the markers follow
 // directly from the row / column directions of the file.
-function orientationMarkers(s) {
-  if (s.stacked) return null;
-  const f = s.first;
-  if (f.iop.length === 6 && f.iop.every(Number.isFinite)) {
-    const row = f.iop.slice(0, 3);
-    const col = f.iop.slice(3, 6);
+function orientationMarkers(it) {
+  if (it.iop.length === 6 && it.iop.every(Number.isFinite)) {
+    const row = it.iop.slice(0, 3);
+    const col = it.iop.slice(3, 6);
     return {
       right: directionLetters(row),
-      left: directionLetters(row.map((v) => -v)),
+      left: directionLetters(row.map((c) => -c)),
       bottom: directionLetters(col),
-      top: directionLetters(col.map((v) => -v)),
+      top: directionLetters(col.map((c) => -c)),
     };
   }
-  const po = f.patientOrientation.split('\\');
+  const po = it.patientOrientation.split('\\');
   if (po.length === 2 && po[0] && po[1]) {
     const opp = (t) => [...t].map((c) => PO_OPPOSITE[c] || c).join('');
     return {right: po[0], bottom: po[1], left: opp(po[0]), top: opp(po[1])};
@@ -1002,26 +1375,160 @@ function orientationMarkers(s) {
   return null;
 }
 
+// Liang-Barsky clipping of segment a-b to the rectangle [0, w] x [0, h]
+function clipSegment(a, b, w, h) {
+  let t0 = 0;
+  let t1 = 1;
+  const dx = b.x - a.x;
+  const dy = b.y - a.y;
+  for (const [pk, qk] of [[-dx, a.x], [dx, w - a.x], [-dy, a.y], [dy, h - a.y]]) {
+    if (pk === 0) {
+      if (qk < 0) return null;
+      continue;
+    }
+    const t = qk / pk;
+    if (pk < 0) t0 = Math.max(t0, t);
+    else t1 = Math.min(t1, t);
+    if (t0 > t1) return null;
+  }
+  return [{x: a.x + t0 * dx, y: a.y + t0 * dy}, {x: a.x + t1 * dx, y: a.y + t1 * dy}];
+}
+
+const VIEW_COLOURS = ['#4ea1ff', '#ff9f43'];
+const SVG_NS = 'http://www.w3.org/2000/svg';
+
+// reference lines (where the other view's slices cut this image) and the
+// double-click locator, as an SVG on top of the viewport
+function drawGeometryOverlay(v, box) {
+  const it = currentItem(v);
+  const p = planeOf(it);
+  if (!p) return [];
+  const svg = document.createElementNS(SVG_NS, 'svg');
+  svg.setAttribute('class', 'refsvg');
+  const drawn = [];
+  const w = otherViewport(v);
+  if (w && w.loaded) {
+    const current = currentItem(w);
+    const q = planeOf(current);
+    const colour = VIEW_COLOURS[w.index];
+    const line = (a, b, cls) => {
+      const l = document.createElementNS(SVG_NS, 'line');
+      l.setAttribute('x1', a.x);
+      l.setAttribute('y1', a.y);
+      l.setAttribute('x2', b.x);
+      l.setAttribute('y2', b.y);
+      l.setAttribute('stroke', colour);
+      l.setAttribute('class', cls);
+      svg.appendChild(l);
+    };
+    const text = (pt, str, cls, anchor) => {
+      const t = document.createElementNS(SVG_NS, 'text');
+      t.setAttribute('x', pt.x);
+      t.setAttribute('y', pt.y);
+      t.setAttribute('text-anchor', anchor);
+      t.setAttribute('fill', colour);
+      t.setAttribute('class', cls);
+      t.textContent = str;
+      svg.appendChild(t);
+      return t;
+    };
+    // screen segment of another slice on this image, clipped to the view
+    // and ordered left -> right
+    const segmentFor = (plane) => {
+      const seg = intersection(p, plane);
+      if (!seg) return null;
+      const a = pixelToScreen(v, seg[0][0], seg[0][1]);
+      const b = pixelToScreen(v, seg[1][0], seg[1][1]);
+      if (!a || !b) return null;
+      const clipped = clipSegment(a, b, box.clientWidth, box.clientHeight);
+      if (!clipped) return null;
+      return clipped[0].x <= clipped[1].x ? clipped : [clipped[1], clipped[0]];
+    };
+    if (sameSpace(p, q)) {
+      // every level of the other series, numbered (click a number to go there)
+      const items = seriesOf(w).items;
+      if (state.allLevels && items.length > 1) {
+        const step = Math.max(1, Math.ceil(items.length / 40));
+        const placed = []; // label positions, to avoid overlapping numbers
+        items.forEach((item, idx) => {
+          if (item === current || (idx % step && idx !== items.length - 1)) return;
+          const plane = planeOf(item);
+          if (!sameSpace(p, plane)) return;
+          const seg = segmentFor(plane);
+          if (!seg) return;
+          line(seg[0], seg[1], 'refline faint');
+          const nearRight = seg[1].x > box.clientWidth - 18;
+          if (placed.some((q2) => Math.abs(q2.x - seg[1].x) < 14 && Math.abs(q2.y - seg[1].y) < 10)) return;
+          placed.push(seg[1]);
+          const t = text({x: nearRight ? seg[1].x - 3 : seg[1].x + 3, y: seg[1].y + 3}, String(idx + 1), 'reflevel', nearRight ? 'end' : 'start');
+          t.addEventListener('click', () => {
+            setActive(w.index);
+            goToImage(idx, w);
+          });
+        });
+      }
+      const seg = segmentFor(q);
+      if (seg) {
+        line(seg[0], seg[1], 'refline');
+        const {cur} = displayIndex(w);
+        const label = `View ${w.index + 1} · image ${cur + 1}`;
+        const pos = {x: Math.min(seg[1].x, box.clientWidth - 8) - 4, y: seg[1].y - 6};
+        text(pos, label, 'reflabel', 'end');
+        drawn.push({a: seg[0], b: seg[1], colour, text: label});
+      }
+    }
+  }
+  if (state.locator && state.locator.frame && state.locator.frame === p.frame) {
+    const loc = patientToPixel(p, state.locator.point);
+    const thick = seriesOf(v)?.first.thickness || 3;
+    if (Math.abs(loc.dist) <= Math.max(thick, 3)) {
+      const c = pixelToScreen(v, loc.x, loc.y);
+      if (c) {
+        for (const [dx, dy] of [[1, 0], [0, 1]]) {
+          const l = document.createElementNS(SVG_NS, 'line');
+          l.setAttribute('x1', c.x - 10 * dx);
+          l.setAttribute('y1', c.y - 10 * dy);
+          l.setAttribute('x2', c.x + 10 * dx);
+          l.setAttribute('y2', c.y + 10 * dy);
+          l.setAttribute('class', 'locator');
+          svg.appendChild(l);
+        }
+      }
+    }
+  }
+  box.appendChild(svg);
+  return drawn;
+}
+
 function updateOverlays() {
-  const s = state.series[state.current];
   const container = $('overlays');
   container.innerHTML = '';
-  if (!s || !state.loaded) return;
   const host = $('viewers').getBoundingClientRect();
-  const spInfo = spacingInfo(s);
-  groups().forEach((g, i) => {
-    const div = $(GROUP_IDS[i]);
-    const r = div.getBoundingClientRect();
+  for (const v of shown()) {
+    const s = seriesOf(v);
     const box = document.createElement('div');
     box.className = 'ovbox';
+    box.dataset.view = String(v.index);
+    const r = $(v.divId).getBoundingClientRect();
     box.style.cssText = `left:${r.left - host.left}px;top:${r.top - host.top}px;width:${r.width}px;height:${r.height}px;`;
+    container.appendChild(box);
+    if (state.layout === 2) {
+      const tag = document.createElement('div');
+      tag.className = 'viewtag';
+      tag.style.background = VIEW_COLOURS[v.index];
+      tag.textContent = String(v.index + 1);
+      box.appendChild(tag);
+    }
+    if (!s || !v.loaded) continue;
+    const g = groupOf(v);
     const vc = viewController(g);
-    const it = currentItem(g) || s.first;
+    const it = currentItem(v) || s.first;
     const f = s.first;
+    const spInfo = spacingInfo(s);
 
     const tl = [];
-    if (i === 0) {
-      tl.push(f.patientName);
+    if (v.index === 0) {
+      if (state.layout === 1) tl.push(f.patientName);
       tl.push([f.patientId && `ID ${f.patientId}`, f.sex, formatAge(f.age)].filter(Boolean).join('  '));
       tl.push(formatDate(f.studyDate || f.seriesDate));
     }
@@ -1030,12 +1537,12 @@ function updateOverlays() {
     if (s.stacked) tr.push('Angled slices shown as a stack');
     const ph = g.getPositionHelper();
     if (ph && ph.getMaximumScrollValue() > 0) {
-      const {cur, max} = displayIndex(g);
+      const {cur, max} = displayIndex(v);
       tr.push(`Image ${cur + 1} / ${max + 1}`);
     }
 
     const bl = [];
-    if (state.probe && state.probe.group === i) bl.push(state.probe.text);
+    if (state.probe && state.probe.view === v.index) bl.push(state.probe.text);
     if (vc && vc.canWindowLevel()) {
       const wl = vc.getWindowLevel();
       bl.push(`W ${Math.round(wl.width)}  L ${Math.round(wl.center)}`);
@@ -1048,9 +1555,7 @@ function updateOverlays() {
     const scale = g.getScale?.();
     const base = g.getBaseScale?.();
     if (scale && base && base.x) br.push(`Zoom ${Math.round((scale.x / base.x) * 100)}%`);
-    if (i === 0) {
-      br.push(spInfo.spacing ? `${fmt(spInfo.spacing[1], 3)} mm/px${spInfo.kind === 'patient' ? '' : spInfo.kind === 'user' ? ' (calibrated)' : spInfo.kind === 'detector' ? ' (detector)' : ' (unreliable)'}` : 'Not calibrated (px)');
-    }
+    br.push(spInfo.spacing ? `${fmt(spInfo.spacing[1], 3)} mm/px${spInfo.kind === 'patient' ? '' : spInfo.kind === 'user' ? ' (calibrated)' : spInfo.kind === 'detector' ? ' (detector)' : ' (unreliable)'}` : 'Not calibrated (px)');
 
     for (const [pos, lines] of [['tl', tl], ['tr', tr], ['bl', bl], ['br', br]]) {
       const text = lines.filter(Boolean).join('\n');
@@ -1060,7 +1565,7 @@ function updateOverlays() {
       o.textContent = text;
       box.appendChild(o);
     }
-    const marks = orientationMarkers(s);
+    const marks = orientationMarkers(it);
     if (marks) {
       for (const side of ['top', 'bottom', 'left', 'right']) {
         if (!marks[side]) continue;
@@ -1070,21 +1575,28 @@ function updateOverlays() {
         box.appendChild(m);
       }
     }
-    container.appendChild(box);
-  });
+    box.refLines = drawGeometryOverlay(v, box);
+  }
 }
 
 function updateButtons() {
-  const loaded = state.loaded;
-  const vc = loaded ? viewController(activeGroup()) : undefined;
+  const v = vp();
+  const loaded = v.loaded;
+  const vc = loaded ? vcOf(v) : undefined;
   const playing = !!vc && vc.isPlaying();
-  $('playBtn').disabled = !loaded || !activeGroup()?.canScroll();
+  $('playBtn').disabled = !loaded || !groupOf(v)?.canScroll();
   $('playBtn').classList.toggle('on', playing);
   $('playBtn').textContent = playing ? 'Stop' : 'Play';
   $('invertBtn').disabled = !loaded || !vc || !vc.isMonochrome();
   $('invertBtn').classList.toggle('on', !!vc && vc.getColourMap() === 'invPlain');
-  for (const id of ['resetBtn', 'exportBtn']) $(id).disabled = !loaded;
+  for (const id of ['resetBtn', 'exportBtn', 'wlBtn']) $(id).disabled = !loaded;
   for (const b of document.querySelectorAll('[data-tool]')) b.disabled = !loaded;
+  $('layoutBtn').classList.toggle('on', state.layout === 2);
+  $('layoutBtn').disabled = !VIEWPORTS[0].loaded && state.layout === 1;
+  $('syncBtn').hidden = state.layout !== 2;
+  $('levelsBtn').hidden = state.layout !== 2;
+  $('levelsBtn').classList.toggle('on', state.allLevels);
+  $('syncBtn').classList.toggle('on', state.sync);
   $('tagsBtn').classList.toggle('on', state.panel === 'tags');
   $('measureBtn').classList.toggle('on', state.panel === 'measure');
 }
@@ -1121,21 +1633,41 @@ function renderSeriesList() {
       list.appendChild(head);
     }
     const b = document.createElement('button');
-    b.className = 'series' + (i === state.current ? ' active' : '') + (s.isReference ? ' reference' : '');
+    b.className = 'series' + (s.isReference ? ' reference' : '');
     b.dataset.index = String(i);
-    b.title = s.title;
+    b.title = `${s.title}\nClick: show in the active view. Drag onto a view to show it there.`;
+    b.draggable = true;
     const thumb = s.thumb ?
       `<img class="thumb" src="${s.thumb}" alt="">` :
       `<div class="thumb">${escapeHtml(f.modality)}</div>`;
     b.innerHTML = `${thumb}<div class="series-meta">
       <div class="series-title"><span class="badge ${escapeHtml(f.modality)}">${escapeHtml(f.modality)}</span>${escapeHtml(s.title)}</div>
       <div class="series-sub">${s.images} image${s.images === 1 ? '' : 's'} · ${f.cols}×${f.rows}</div>
-    </div>`;
+    </div><div class="inview"></div>`;
     b.addEventListener('click', () => loadSeries(i));
+    b.addEventListener('dragstart', (e) => {
+      e.dataTransfer.setData('text/x-series', String(i));
+      e.dataTransfer.effectAllowed = 'copy';
+    });
     list.appendChild(b);
   });
-  const active = list.querySelector('.series.active');
-  if (active) active.scrollIntoView({block: 'nearest'});
+  markSeriesList();
+}
+
+// highlight the series shown in each view
+function markSeriesList() {
+  for (const b of document.querySelectorAll('.series')) {
+    const i = parseInt(b.dataset.index, 10);
+    const views = shown().filter((v) => v.series === i);
+    b.classList.toggle('active', views.some((v) => v.index === state.active));
+    b.classList.toggle('inother', views.length > 0 && !views.some((v) => v.index === state.active));
+    const chips = b.querySelector('.inview');
+    if (chips) {
+      chips.innerHTML = state.layout === 2 ?
+        views.map((v) => `<span style="background:${VIEW_COLOURS[v.index]}">${v.index + 1}</span>`).join('') : '';
+    }
+  }
+  document.querySelector('.series.active')?.scrollIntoView({block: 'nearest'});
 }
 
 // swap the placeholder for the rendered thumbnail without rebuilding the list
@@ -1151,7 +1683,7 @@ function showThumb(s) {
 }
 
 function renderTags() {
-  const it = currentItem() || state.series[state.current]?.first;
+  const it = currentItem() || seriesOf(vp())?.first;
   const table = $('tagsTable');
   if (!it) {
     table.innerHTML = '';
@@ -1224,11 +1756,13 @@ function setPanel(name) {
 }
 
 // ---------------------------------------------------------------------------
-// export the current view as PNG (image + measurements + overlay text)
+// export the active view as PNG (image + measurements + overlay)
 
 function exportPng() {
-  const i = state.activeGroup;
-  const div = $(GROUP_IDS[i]);
+  const v = vp();
+  const s = seriesOf(v);
+  if (!s || !v.loaded) return;
+  const div = $(v.divId);
   const rect = div.getBoundingClientRect();
   const dpr = window.devicePixelRatio || 1;
   const out = document.createElement('canvas');
@@ -1242,8 +1776,18 @@ function exportPng() {
     if (!r.width || !r.height || getComputedStyle(c).display === 'none') continue;
     ctx.drawImage(c, (r.left - rect.left) * dpr, (r.top - rect.top) * dpr, r.width * dpr, r.height * dpr);
   }
-  const box = $('overlays').children[i];
+  const box = $('overlays').querySelector(`.ovbox[data-view="${v.index}"]`);
   if (box) {
+    for (const l of box.refLines || []) {
+      ctx.strokeStyle = l.colour;
+      ctx.lineWidth = 1.5 * dpr;
+      ctx.setLineDash([6 * dpr, 4 * dpr]);
+      ctx.beginPath();
+      ctx.moveTo(l.a.x * dpr, l.a.y * dpr);
+      ctx.lineTo(l.b.x * dpr, l.b.y * dpr);
+      ctx.stroke();
+    }
+    ctx.setLineDash([]);
     ctx.font = `${12 * dpr}px Menlo, monospace`;
     ctx.fillStyle = '#f2d56b';
     ctx.shadowColor = '#000';
@@ -1259,8 +1803,7 @@ function exportPng() {
       });
     }
   }
-  const s = state.series[state.current];
-  const {cur} = displayIndex(activeGroup());
+  const {cur} = displayIndex(v);
   const name = `${s.first.modality}_${s.title}_image${cur + 1}`.replace(/[^\w.-]+/g, '_');
   out.toBlob((blob) => {
     const a = document.createElement('a');
@@ -1333,61 +1876,53 @@ function renderThumb(s) {
         finish(null, c.toDataURL('image/jpeg', 0.8));
       });
     });
-    a.loadImageObject([{name: item.name, filename: item.name, data: bufferFor(s, item, index, 1)}]);
+    a.loadImageObject([{name: item.name, filename: item.name, data: bufferFor(s, item, index)}]);
   });
 }
 
 // ---------------------------------------------------------------------------
 // input: trackpad / mouse wheel, pinch, pixel probe, keyboard
 
-function groupFromEvent(e) {
+function viewportFromEvent(e) {
   const div = e.target.closest && e.target.closest('.layerGroup');
-  if (!div || !app) return null;
-  const i = GROUP_IDS.indexOf(div.id);
-  return i < 0 ? null : {index: i, div, group: app.getLayerGroupByDivId(div.id)};
+  if (!div) return null;
+  const v = VIEWPORTS.find((x) => x.divId === div.id);
+  return v && v.index < state.layout ? v : null;
 }
 
-function focusGroup(index) {
-  if (index === state.activeGroup) return;
-  state.activeGroup = index;
-  app.setActiveLayerGroup(index);
-  fillPresets();
-  updateButtons();
-  updateUi();
-}
-
-function zoomAt(group, div, step, clientX, clientY) {
-  const vl = viewLayer(group);
+function zoomAt(v, step, clientX, clientY) {
+  const g = groupOf(v);
+  const vl = viewLayer(g);
   if (!vl) return;
-  const rect = div.getBoundingClientRect();
+  const rect = $(v.divId).getBoundingClientRect();
   const p = vl.displayToMainPlanePos(new dwv.Point2D(clientX - rect.left, clientY - rect.top));
   const center = vl.getViewController().getPlanePositionFromPlanePoint(p);
-  group.addScale(step, center);
-  group.draw();
+  g.addScale(step, center);
+  g.draw();
   scheduleUiUpdate();
 }
 
 let wheelAcc = 0;
 let wheelResetTimer;
 function onWheel(e) {
-  const hit = groupFromEvent(e);
-  if (!hit || !hit.group || !state.loaded) return;
+  const v = viewportFromEvent(e);
+  if (!v || !v.loaded) return;
   // take over from dwv so trackpads scroll smoothly and pinch zooms
   e.preventDefault();
   e.stopPropagation();
-  focusGroup(hit.index);
+  setActive(v.index);
   const dy = e.deltaMode === 1 ? e.deltaY * 16 : e.deltaY;
   if (e.ctrlKey || e.metaKey) {
     // trackpad pinch arrives as ctrl+wheel (Chrome, Firefox); cmd+wheel for mice
     const step = Math.max(-0.5, Math.min(0.5, -dy * (e.ctrlKey ? 0.01 : 0.002)));
-    zoomAt(hit.group, hit.div, step, e.clientX, e.clientY);
+    zoomAt(v, step, e.clientX, e.clientY);
     return;
   }
   wheelAcc += dy;
   clearTimeout(wheelResetTimer);
   wheelResetTimer = setTimeout(() => { wheelAcc = 0; }, 150);
   if (Math.abs(wheelAcc) >= 16) {
-    scrollBy(wheelAcc > 0 ? 1 : -1, hit.group);
+    scrollBy(wheelAcc > 0 ? 1 : -1, v);
     wheelAcc = 0;
   }
 }
@@ -1400,18 +1935,18 @@ function onGestureStart(e) {
 }
 function onGestureChange(e) {
   e.preventDefault();
-  const hit = groupFromEvent(e);
-  if (!hit || !hit.group || !state.loaded) return;
+  const v = viewportFromEvent(e);
+  if (!v || !v.loaded) return;
   const step = (e.scale - gestureScale) * 1.5;
   gestureScale = e.scale;
-  zoomAt(hit.group, hit.div, step, e.clientX, e.clientY);
+  zoomAt(v, step, e.clientX, e.clientY);
 }
 
-function probeAt(clientX, clientY, hit) {
-  const vl = viewLayer(hit.group);
+function probeAt(v, clientX, clientY) {
+  const vl = viewLayer(groupOf(v));
   if (!vl) return null;
   const vc = vl.getViewController();
-  const rect = hit.div.getBoundingClientRect();
+  const rect = $(v.divId).getBoundingClientRect();
   const planePos = vl.displayToPlanePos(new dwv.Point2D(clientX - rect.left, clientY - rect.top));
   const pos = vc.getPositionFromPlanePoint(planePos);
   if (!vc.isPositionInBounds(pos)) return null;
@@ -1421,19 +1956,19 @@ function probeAt(clientX, clientY, hit) {
 }
 
 function onPointerMove(e) {
-  const hit = groupFromEvent(e);
-  if (!hit || !hit.group || !state.loaded) return;
+  const v = viewportFromEvent(e);
+  if (!v || !v.loaded) return;
   let text = '';
   try {
-    const p = probeAt(e.clientX, e.clientY, hit);
+    const p = probeAt(v, e.clientX, e.clientY);
     if (p) {
-      const v = typeof p.value === 'number' ? ` = ${Math.round(p.value * 10) / 10}${p.unit ? ' ' + p.unit : ''}` : '';
-      text = `x ${p.x}  y ${p.y}${v}`;
+      const val = typeof p.value === 'number' ? ` = ${Math.round(p.value * 10) / 10}${p.unit ? ' ' + p.unit : ''}` : '';
+      text = `x ${p.x}  y ${p.y}${val}`;
     }
   } catch {
     text = '';
   }
-  const next = text ? {group: hit.index, text} : null;
+  const next = text ? {view: v.index, text} : null;
   if (JSON.stringify(next) !== JSON.stringify(state.probe)) {
     state.probe = next;
     scheduleUiUpdate();
@@ -1450,9 +1985,10 @@ function onKey(e) {
     if (e.key === 'Escape' || e.key === '?') $('help').hidden = true;
     return;
   }
-  if (!app) return;
+  const v = vp();
+  if (!v.app) return;
   if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'z') {
-    if (e.shiftKey) app.redo(); else app.undo();
+    if (e.shiftKey) v.app.redo(); else v.app.undo();
     scheduleMeasureUpdate();
     e.preventDefault();
     return;
@@ -1467,16 +2003,30 @@ function onKey(e) {
   case 'PageDown': scrollBy(10); handled(); return;
   case 'Home': goToImage(0); handled(); return;
   case 'End': goToImage(1e9); handled(); return;
-  case '[': if (state.current > 0) loadSeries(state.current - 1); return;
-  case ']': if (state.current < state.series.length - 1) loadSeries(state.current + 1); return;
+  case '[': if (v.series > 0) loadSeries(v.series - 1); return;
+  case ']': if (v.series < state.series.length - 1) loadSeries(v.series + 1); return;
   case ' ': togglePlay(); handled(); return;
   case '?': $('help').hidden = false; return;
-  case 'Escape': if (state.panel) setPanel(state.panel); return;
+  case 'Tab':
+    if (state.layout === 2) {
+      setActive(1 - state.active);
+      handled();
+    }
+    return;
+  case 'Escape':
+    if (!$('wlPanel').hidden) toggleWlPanel();
+    else if (state.locator) {
+      state.locator = null;
+      scheduleUiUpdate();
+    } else if (state.panel) setPanel(state.panel);
+    return;
   case 'Delete': case 'Backspace': {
     // dwv's draw tool deletes the selected shape itself; make sure it is gone
     const uid = state.selected;
     setTimeout(() => {
-      if (uid && annotations().some(({annotation: a}) => a.trackingUid === uid)) deleteAnnotation(uid);
+      for (const w of shown()) {
+        if (uid && annotations(w).some(({annotation: a}) => a.trackingUid === uid)) deleteAnnotation(uid, w);
+      }
       state.selected = null;
       scheduleMeasureUpdate();
     }, 0);
@@ -1484,12 +2034,11 @@ function onKey(e) {
     return;
   }
   }
-  if (!state.loaded) return;
-  const tools = {w: 'WindowLevel', p: 'ZoomAndPan', s: 'Scroll', m: 'Ruler', d: 'Ruler', a: 'Protractor', e: 'Ellipse', b: 'Rectangle'};
+  if (!v.loaded) return;
+  const tools = {w: 'WindowLevel', p: 'ZoomAndPan', s: 'Scroll', m: 'Ruler', d: 'Ruler', a: 'Protractor', e: 'Ellipse', b: 'Rectangle', o: 'Ratio'};
   const k = key.toLowerCase();
   if (tools[k]) {
-    setTool(tools[k]);
-    if (TOOLS[tools[k]].shape && !state.panel) setPanel('measure');
+    chooseTool(tools[k]);
     return;
   }
   switch (k) {
@@ -1500,6 +2049,10 @@ function onKey(e) {
   case 'f': toggleSidebar(); return;
   case 'g': toggleSmoothing(); return;
   case 'x': exportPng(); return;
+  case 'v': setLayout(state.layout === 2 ? 1 : 2); return;
+  case 'c': toggleWlPanel(); return;
+  case 'y': toggleSync(); return;
+  case 'k': toggleLevels(); return;
   }
   if (/^[1-9]$/.test(key)) {
     const sel = $('presetSelect');
@@ -1511,10 +2064,33 @@ function onKey(e) {
   }
 }
 
+function chooseTool(name) {
+  setTool(name);
+  if (TOOLS[name].shape && !state.panel) setPanel('measure');
+  if (name === 'Ratio') {
+    toast('Ratio: draw two distances. The panel shows the first ÷ the second; you can change which ones.');
+  }
+}
+
+function toggleLevels() {
+  state.allLevels = !state.allLevels;
+  savePref('allLevels', state.allLevels);
+  updateButtons();
+  scheduleUiUpdate();
+}
+
+function toggleSync() {
+  state.sync = !state.sync;
+  if (state.sync) syncFrom(vp());
+  updateButtons();
+}
+
 function toggleSmoothing() {
   state.smooth = !state.smooth;
   savePref('smooth', state.smooth);
-  if (app && state.loaded) app.setImageSmoothing(state.smooth);
+  for (const v of shown()) {
+    if (v.loaded) v.app.setImageSmoothing(state.smooth);
+  }
   toast(state.smooth ? 'Smooth display on' : 'Smooth display off: individual pixels visible');
 }
 
@@ -1524,10 +2100,7 @@ function toggleSidebar() {
 
 function bindUi() {
   for (const b of document.querySelectorAll('[data-tool]')) {
-    b.addEventListener('click', () => {
-      setTool(b.dataset.tool);
-      if (TOOLS[b.dataset.tool].shape && !state.panel) setPanel('measure');
-    });
+    b.addEventListener('click', () => chooseTool(b.dataset.tool));
   }
   $('presetSelect').addEventListener('change', (e) => {
     applyPreset(e.target.value);
@@ -1536,6 +2109,13 @@ function bindUi() {
   $('invertBtn').addEventListener('click', toggleInvert);
   $('playBtn').addEventListener('click', togglePlay);
   $('resetBtn').addEventListener('click', resetView);
+  $('layoutBtn').addEventListener('click', () => setLayout(state.layout === 2 ? 1 : 2));
+  $('syncBtn').addEventListener('click', toggleSync);
+  $('levelsBtn').addEventListener('click', toggleLevels);
+  $('wlBtn').addEventListener('click', toggleWlPanel);
+  for (const id of ['wlBrightness', 'wlContrast', 'wlLevel', 'wlWidth']) $(id).addEventListener('input', onWlInput);
+  $('wlReset').addEventListener('click', () => vcOf(vp())?.resetWindowLevel());
+  $('wlClose').addEventListener('click', toggleWlPanel);
   $('tagsBtn').addEventListener('click', () => setPanel('tags'));
   $('measureBtn').addEventListener('click', () => setPanel('measure'));
   $('exportBtn').addEventListener('click', exportPng);
@@ -1544,6 +2124,12 @@ function bindUi() {
   $('clearBtn').addEventListener('click', clearMeasures);
   $('calApply').addEventListener('click', applyCalibration);
   $('calReset').addEventListener('click', resetCalibration);
+  $('ratioA').addEventListener('change', (e) => { state.ratio.a = e.target.value; renderMeasurements(); });
+  $('ratioB').addEventListener('change', (e) => { state.ratio.b = e.target.value; renderMeasurements(); });
+  $('ratioSwap').addEventListener('click', () => {
+    state.ratio = {a: state.ratio.b, b: state.ratio.a};
+    renderMeasurements();
+  });
   $('tagFilter').addEventListener('input', renderTags);
   $('helpBtn').addEventListener('click', () => { $('help').hidden = false; });
   $('helpClose').addEventListener('click', () => { $('help').hidden = true; });
@@ -1555,8 +2141,14 @@ function bindUi() {
   viewers.addEventListener('gesturestart', onGestureStart, {capture: true});
   viewers.addEventListener('gesturechange', onGestureChange, {capture: true});
   viewers.addEventListener('pointerdown', (e) => {
-    const hit = groupFromEvent(e);
-    if (hit) focusGroup(hit.index);
+    const v = viewportFromEvent(e);
+    if (v) setActive(v.index);
+  }, {capture: true});
+  viewers.addEventListener('dblclick', (e) => {
+    const v = viewportFromEvent(e);
+    if (!v || !v.loaded) return;
+    e.stopPropagation(); // dwv would start cine playback
+    locate(v, e.clientX, e.clientY);
   }, {capture: true});
   viewers.addEventListener('pointermove', onPointerMove);
   viewers.addEventListener('pointerleave', () => {
@@ -1566,6 +2158,18 @@ function bindUi() {
     }
   });
   viewers.addEventListener('pointerup', scheduleMeasureUpdate);
+  // series dragged from the list onto a view
+  viewers.addEventListener('dragover', (e) => {
+    if (e.dataTransfer.types.includes('text/x-series') && viewportFromEvent(e)) e.preventDefault();
+  });
+  viewers.addEventListener('drop', (e) => {
+    const v = viewportFromEvent(e);
+    const i = parseInt(e.dataTransfer.getData('text/x-series'), 10);
+    if (!v || !Number.isFinite(i)) return;
+    e.preventDefault();
+    setActive(v.index);
+    loadSeries(i, v);
+  });
   // stop the page itself from zooming on pinch outside the viewer
   document.addEventListener('gesturestart', (e) => e.preventDefault());
   window.addEventListener('keydown', onKey);
@@ -1577,25 +2181,98 @@ function bindUi() {
   new ResizeObserver(() => {
     cancelAnimationFrame(resizeRaf);
     resizeRaf = requestAnimationFrame(() => {
-      if (!state.loaded || !app) return;
-      app.onResize();
+      for (const v of shown()) {
+        if (v.loaded) v.app.onResize();
+      }
       updateOverlays();
     });
   }).observe(viewers);
 
-  $('folderInput').addEventListener('change', async (e) => {
-    if (!e.target.files.length) return;
-    const items = await indexFromFiles(e.target.files);
-    e.target.value = '';
-    showSeries(items, 'No DICOM images found in that folder.');
+  for (const id of ['folderInput', 'filesInput']) {
+    $(id).addEventListener('change', async (e) => {
+      const files = [...e.target.files];
+      e.target.value = '';
+      await openFiles(files);
+    });
+  }
+  bindFileDrop();
+}
+
+async function openFiles(files) {
+  if (!files.length) return;
+  try {
+    const hadScans = state.series.length > 0;
+    const items = await indexFromFiles(files);
+    const none = `No DICOM images found in the ${files.length} file${files.length === 1 ? '' : 's'} you picked.`;
+    if (!items.length && hadScans) {
+      // keep what is open
+      $('empty').hidden = true;
+      toast(none);
+      return;
+    }
+    showSeries(items, none);
+  } catch (e) {
+    console.error(e);
+    setEmpty('Could not read those files: ' + e.message, undefined, true);
+  }
+}
+
+// files or folders dragged from Finder onto the window
+function bindFileDrop() {
+  const hasFiles = (e) => [...(e.dataTransfer?.types || [])].includes('Files');
+  let depth = 0;
+  window.addEventListener('dragenter', (e) => {
+    if (!hasFiles(e)) return;
+    depth += 1;
+    $('dropHint').hidden = false;
+  });
+  window.addEventListener('dragleave', (e) => {
+    if (!hasFiles(e)) return;
+    depth = Math.max(0, depth - 1);
+    if (!depth) $('dropHint').hidden = true;
+  });
+  window.addEventListener('dragover', (e) => {
+    if (hasFiles(e)) e.preventDefault();
+  });
+  window.addEventListener('drop', async (e) => {
+    if (!hasFiles(e)) return;
+    e.preventDefault();
+    depth = 0;
+    $('dropHint').hidden = true;
+    const entries = [...e.dataTransfer.items].map((it) => it.webkitGetAsEntry?.()).filter(Boolean);
+    const files = entries.length ? await filesFromEntries(entries) : [...e.dataTransfer.files];
+    await openFiles(files);
   });
 }
 
+// read dropped folders recursively
+async function filesFromEntries(entries) {
+  const out = [];
+  async function visit(entry, path) {
+    if (entry.isFile) {
+      const file = await new Promise((resolve, reject) => entry.file(resolve, reject));
+      Object.defineProperty(file, 'webkitRelativePath', {value: path + file.name});
+      out.push(file);
+    } else if (entry.isDirectory) {
+      const reader = entry.createReader();
+      for (;;) {
+        const batch = await new Promise((resolve, reject) => reader.readEntries(resolve, reject));
+        if (!batch.length) break;
+        for (const child of batch) await visit(child, `${path}${entry.name}/`);
+      }
+    }
+  }
+  for (const entry of entries) await visit(entry, '');
+  return out;
+}
+
 function showSeries(items, emptyMsg) {
-  disposeApp(app);
-  app = null;
-  state.loaded = false;
-  state.current = -1;
+  for (const v of VIEWPORTS) {
+    disposeApp(v.app);
+    Object.assign(v, {app: null, series: -1, loaded: false, flip: false});
+  }
+  state.locator = null;
+  state.active = 0;
   state.sopIndex = new Map(items.map((it) => [it.sop, it]));
   state.series = groupSeries(items);
   renderPatient(items);
@@ -1616,7 +2293,8 @@ function showSeries(items, emptyMsg) {
       start = i;
     }
   });
-  loadSeries(start);
+  loadSeries(start, VIEWPORTS[0]);
+  if (state.layout === 2) loadSeries(companionSeries(start), VIEWPORTS[1]);
 }
 
 // ---------------------------------------------------------------------------

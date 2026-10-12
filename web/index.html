@@ -27,9 +27,13 @@
     <div class="brand">DICOM Viewer</div>
     <div id="patient" class="patient"></div>
     <div class="spacer"></div>
-    <label class="btn" title="Open another folder of DICOM files (e.g. another CD)">
+    <label class="btn" title="Open a folder of DICOM images (e.g. a copied CD). You can also drag a folder onto the window.">
       Open folder…
       <input id="folderInput" type="file" webkitdirectory multiple hidden>
+    </label>
+    <label class="btn" title="Open one or more DICOM files">
+      Open files…
+      <input id="filesInput" type="file" multiple hidden>
     </label>
     <button id="helpBtn" class="btn" title="Keyboard & trackpad shortcuts (?)">?</button>
   </header>
@@ -42,7 +46,7 @@
     <section class="workspace">
       <div class="toolbar" id="toolbar">
         <div class="group" role="group" aria-label="Navigate">
-          <button data-tool="WindowLevel" class="active" title="Brightness / contrast: drag (W)">Contrast</button>
+          <button data-tool="WindowLevel" class="active" title="Drag on the image: up/down = brightness, left/right = contrast (W)">Window</button>
           <button data-tool="ZoomAndPan" title="Move the image: drag. Zoom: pinch (P)">Pan</button>
           <button data-tool="Scroll" title="Scroll slices: drag (S)">Scroll</button>
         </div>
@@ -51,13 +55,20 @@
           <button data-tool="Protractor" title="Measure an angle: click 3 points (A)">Angle</button>
           <button data-tool="Ellipse" title="Ellipse: area and mean / SD of pixel values (E)">Ellipse</button>
           <button data-tool="Rectangle" title="Rectangle: area and mean / SD of pixel values (B)">Rectangle</button>
+          <button data-tool="Ratio" title="Ratio of two distances, e.g. canal ÷ vertebral body (O)">Ratio</button>
           <button data-tool="Arrow" title="Arrow annotation">Arrow</button>
         </div>
         <div class="group">
           <select id="presetSelect" title="Window presets (1–9)" aria-label="Window preset"></select>
+          <button id="wlBtn" title="Brightness and contrast sliders (C)">Brightness / Contrast</button>
           <button id="invertBtn" title="Invert grey levels (I)">Invert</button>
           <button id="playBtn" title="Play through slices (Space)">Play</button>
           <button id="resetBtn" title="Reset zoom, pan and contrast (R)">Reset</button>
+        </div>
+        <div class="group">
+          <button id="layoutBtn" title="Two views side by side, with reference lines (V)">2 views</button>
+          <button id="syncBtn" title="Scroll series in the same plane together (Y)" hidden>Sync</button>
+          <button id="levelsBtn" title="Show every slice of the other view as a numbered line (K)" hidden>All levels</button>
         </div>
         <div class="group">
           <button id="measureBtn" title="Measurement list and calibration (L)">Measurements <span id="measureCount"></span></button>
@@ -70,12 +81,35 @@
         <div class="stage">
           <div id="viewers" class="viewers">
             <div id="layerGroup0" class="layerGroup"></div>
+            <div id="layerGroup1" class="layerGroup"></div>
           </div>
           <div id="overlays" class="overlays"></div>
+          <div id="wlPanel" class="wl-panel" hidden>
+            <div class="wl-head">
+              <b>Brightness / contrast</b>
+              <button id="wlClose" class="icon" title="Close (Esc)">✕</button>
+            </div>
+            <label>Brightness <span class="muted">(window level)</span>
+              <input id="wlBrightness" type="range">
+            </label>
+            <label>Contrast <span class="muted">(window width)</span>
+              <input id="wlContrast" type="range" min="0" max="1" step="0.001">
+            </label>
+            <div class="wl-numbers">
+              <label>L <input id="wlLevel" type="number" step="1"></label>
+              <label>W <input id="wlWidth" type="number" step="1" min="1"></label>
+              <button id="wlReset" class="btn small">Reset</button>
+            </div>
+            <p class="muted">Tip: with the <b>Window</b> tool, drag on the image (up/down brightness, left/right contrast).</p>
+          </div>
           <div id="empty" class="empty">
             <div id="emptyMsg">Looking for scans…</div>
             <div class="progress"><div id="progressBar"></div></div>
-            <label id="emptyOpen" class="btn big" for="folderInput" hidden>Open folder…</label>
+            <div id="emptyOpen" class="empty-actions" hidden>
+              <label class="btn big" for="folderInput">Open folder…</label>
+              <label class="btn big" for="filesInput">Open files…</label>
+              <div class="muted">or drag a folder or files onto this window</div>
+            </div>
           </div>
         </div>
 
@@ -85,6 +119,13 @@
             <h3>Measurements</h3>
             <div id="calibration" class="calibration"></div>
             <div id="measureList" class="measure-list"></div>
+            <div id="ratioBox" class="ratio-box" hidden>
+              <h3>Ratio</h3>
+              <div class="ratio-row"><span>A</span><select id="ratioA" aria-label="Distance A"></select></div>
+              <div class="ratio-row"><span>B</span><select id="ratioB" aria-label="Distance B"></select></div>
+              <div class="ratio-row"><span>A ÷ B</span><div id="ratioValue"></div></div>
+              <button id="ratioSwap" class="btn small">Swap A and B</button>
+            </div>
             <button id="clearBtn" class="btn small">Delete all measurements</button>
             <div id="calForm" class="cal-form" hidden>
               <h3>Calibrate</h3>
@@ -113,6 +154,8 @@
     </section>
   </div>
 
+  <div id="dropHint" class="drop-hint" hidden><div>Drop DICOM files or a folder to open them</div></div>
+
   <!-- off-screen area used to render series thumbnails -->
   <div id="thumbStage" aria-hidden="true"><div id="thumbGroup"></div></div>
 
@@ -131,13 +174,23 @@
         <tr><td>↑ ↓ / ← →</td><td>Previous / next image</td></tr>
         <tr><td>Page Up / Page Down · Home / End</td><td>Jump 10 images · first / last</td></tr>
         <tr><td>[ &nbsp; ]</td><td>Previous / next series</td></tr>
-        <tr><td>W · P · S</td><td>Contrast · Pan · Scroll</td></tr>
-        <tr><td>M · A · E · B</td><td>Distance · Angle · Ellipse · Rectangle</td></tr>
+        <tr><td>W · P · S</td><td>Window (brightness/contrast drag) · Pan · Scroll</td></tr>
+        <tr><td>M · A · E · B · O</td><td>Distance · Angle · Ellipse · Rectangle · Ratio</td></tr>
+        <tr><td>C</td><td>Brightness / contrast sliders</td></tr>
+        <tr><td>V</td><td>Two views side by side (drag a series from the list onto a view)</td></tr>
+        <tr><td>Tab</td><td>Switch the active view</td></tr>
+        <tr><td>Double-click</td><td>Show that point in the other view (jumps to the slice through it)</td></tr>
+        <tr><td>Y · K</td><td>Sync scrolling · show all levels of the other view</td></tr>
         <tr><td>1 – 9</td><td>Window presets</td></tr>
         <tr><td>I · R · Space</td><td>Invert · Reset · Play</td></tr>
         <tr><td>L · T · X · F</td><td>Measurements · Tags · Export PNG · Hide series list</td></tr>
         <tr><td>G</td><td>Smooth display on / off (off shows the individual pixels)</td></tr>
       </table>
+      <h2>Two views and reference lines</h2>
+      <p class="note">With <b>2 views</b> on (V), the line in each view shows where the other view's current
+        slice cuts it, e.g. the level of an axial cut on the sagittal image. <b>All levels</b> also draws every
+        slice of the other series as a faint numbered line; click a number to go to that slice. Lines are only
+        drawn between series that share the same patient coordinates (same exam).</p>
       <h2>About measurements</h2>
       <p class="note">CT and MR distances use the pixel size stored by the scanner (patient plane), shown
         bottom-right of the image, e.g. 0.280 mm/px. Plain X-rays usually only store the pixel size at the
