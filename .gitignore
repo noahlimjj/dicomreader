@@ -1,0 +1,19 @@
+# Never commit medical images or patient data
+*.dcm
+*.DCM
+*.dicom
+DICOMDIR
+DICOM/
+IHE_PDI/
+VIEWER/
+VINFO/
+
+# macOS / editors
+.DS_Store
+*.swp
+.vscode/
+.idea/
+
+# test output
+node_modules/
+screenshots/

@@ -1,0 +1,151 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>DICOM Viewer</title>
+  <link rel="icon" href="data:,">
+  <link rel="stylesheet" href="style.css">
+  <!-- dwv dependencies (UMD builds), exposed to the dwv ES module through shims -->
+  <script src="vendor/konva/konva.min.js"></script>
+  <script src="vendor/jszip/jszip.min.js"></script>
+  <script src="vendor/magic-wand-tool/magic-wand.min.js"></script>
+  <script type="importmap">
+  {
+    "imports": {
+      "konva": "./vendor/shims/konva.js",
+      "jszip": "./vendor/shims/jszip.js",
+      "magic-wand-tool": "./vendor/shims/magic-wand-tool.js"
+    }
+  }
+  </script>
+  <script type="module" src="app.js"></script>
+</head>
+<body>
+  <header class="topbar">
+    <button id="sidebarBtn" class="btn icon-btn" title="Show / hide series list (F)">☰</button>
+    <div class="brand">DICOM Viewer</div>
+    <div id="patient" class="patient"></div>
+    <div class="spacer"></div>
+    <label class="btn" title="Open another folder of DICOM files (e.g. another CD)">
+      Open folder…
+      <input id="folderInput" type="file" webkitdirectory multiple hidden>
+    </label>
+    <button id="helpBtn" class="btn" title="Keyboard & trackpad shortcuts (?)">?</button>
+  </header>
+
+  <div class="main">
+    <aside class="sidebar">
+      <div id="seriesList" class="series-list"></div>
+    </aside>
+
+    <section class="workspace">
+      <div class="toolbar" id="toolbar">
+        <div class="group" role="group" aria-label="Navigate">
+          <button data-tool="WindowLevel" class="active" title="Brightness / contrast: drag (W)">Contrast</button>
+          <button data-tool="ZoomAndPan" title="Move the image: drag. Zoom: pinch (P)">Pan</button>
+          <button data-tool="Scroll" title="Scroll slices: drag (S)">Scroll</button>
+        </div>
+        <div class="group" role="group" aria-label="Measure">
+          <button data-tool="Ruler" title="Measure a distance in mm (M)">Distance</button>
+          <button data-tool="Protractor" title="Measure an angle: click 3 points (A)">Angle</button>
+          <button data-tool="Ellipse" title="Ellipse: area and mean / SD of pixel values (E)">Ellipse</button>
+          <button data-tool="Rectangle" title="Rectangle: area and mean / SD of pixel values (B)">Rectangle</button>
+          <button data-tool="Arrow" title="Arrow annotation">Arrow</button>
+        </div>
+        <div class="group">
+          <select id="presetSelect" title="Window presets (1–9)" aria-label="Window preset"></select>
+          <button id="invertBtn" title="Invert grey levels (I)">Invert</button>
+          <button id="playBtn" title="Play through slices (Space)">Play</button>
+          <button id="resetBtn" title="Reset zoom, pan and contrast (R)">Reset</button>
+        </div>
+        <div class="group">
+          <button id="measureBtn" title="Measurement list and calibration (L)">Measurements <span id="measureCount"></span></button>
+          <button id="tagsBtn" title="DICOM tags of the current image (T)">Tags</button>
+          <button id="exportBtn" title="Save the current view as PNG (X)">Export PNG</button>
+        </div>
+      </div>
+
+      <div class="stage-row">
+        <div class="stage">
+          <div id="viewers" class="viewers">
+            <div id="layerGroup0" class="layerGroup"></div>
+          </div>
+          <div id="overlays" class="overlays"></div>
+          <div id="empty" class="empty">
+            <div id="emptyMsg">Looking for scans…</div>
+            <div class="progress"><div id="progressBar"></div></div>
+            <label id="emptyOpen" class="btn big" for="folderInput" hidden>Open folder…</label>
+          </div>
+        </div>
+
+        <aside id="sidepanel" class="sidepanel" hidden>
+          <button id="panelClose" class="icon panel-close" title="Close (Esc)">✕</button>
+          <div id="measureView" class="panel-body" hidden>
+            <h3>Measurements</h3>
+            <div id="calibration" class="calibration"></div>
+            <div id="measureList" class="measure-list"></div>
+            <button id="clearBtn" class="btn small">Delete all measurements</button>
+            <div id="calForm" class="cal-form" hidden>
+              <h3>Calibrate</h3>
+              <p id="calHint" class="muted"></p>
+              <div class="cal-row">
+                <input id="calInput" type="text" inputmode="decimal" placeholder="Real length" aria-label="Real length in mm">
+                <span class="muted">mm</span>
+                <button id="calApply" class="btn small">Apply</button>
+              </div>
+              <button id="calReset" class="btn small" hidden>Remove calibration</button>
+            </div>
+          </div>
+          <div id="tagsView" class="panel-body tags-body" hidden>
+            <h3>DICOM tags</h3>
+            <input id="tagFilter" type="search" placeholder="Filter tags…" aria-label="Filter tags">
+            <div id="tagsFile" class="muted small-text"></div>
+            <div class="tags-scroll"><table id="tagsTable"></table></div>
+          </div>
+        </aside>
+      </div>
+
+      <div class="slicebar">
+        <input id="sliceSlider" type="range" min="0" max="0" value="0" disabled aria-label="Image">
+        <span id="sliceLabel" class="slice-label"></span>
+      </div>
+    </section>
+  </div>
+
+  <!-- off-screen area used to render series thumbnails -->
+  <div id="thumbStage" aria-hidden="true"><div id="thumbGroup"></div></div>
+
+  <div id="help" class="modal" hidden>
+    <div class="modal-box">
+      <h2>Controls</h2>
+      <table>
+        <tr><td>Two-finger scroll / mouse wheel</td><td>Next / previous image</td></tr>
+        <tr><td>Pinch (trackpad) / ⌘ + scroll</td><td>Zoom</td></tr>
+        <tr><td>Drag with Contrast</td><td>Up/down = brightness, left/right = contrast</td></tr>
+        <tr><td>Drag with Pan</td><td>Move the image</td></tr>
+        <tr><td>Distance · Ellipse · Rectangle</td><td>Drag on the image</td></tr>
+        <tr><td>Angle</td><td>Click three points (the middle one is the vertex)</td></tr>
+        <tr><td>Click a measurement</td><td>Select it: drag its handles, Delete removes it</td></tr>
+        <tr><td>⌘Z / ⇧⌘Z</td><td>Undo / redo</td></tr>
+        <tr><td>↑ ↓ / ← →</td><td>Previous / next image</td></tr>
+        <tr><td>Page Up / Page Down · Home / End</td><td>Jump 10 images · first / last</td></tr>
+        <tr><td>[ &nbsp; ]</td><td>Previous / next series</td></tr>
+        <tr><td>W · P · S</td><td>Contrast · Pan · Scroll</td></tr>
+        <tr><td>M · A · E · B</td><td>Distance · Angle · Ellipse · Rectangle</td></tr>
+        <tr><td>1 – 9</td><td>Window presets</td></tr>
+        <tr><td>I · R · Space</td><td>Invert · Reset · Play</td></tr>
+        <tr><td>L · T · X · F</td><td>Measurements · Tags · Export PNG · Hide series list</td></tr>
+        <tr><td>G</td><td>Smooth display on / off (off shows the individual pixels)</td></tr>
+      </table>
+      <h2>About measurements</h2>
+      <p class="note">CT and MR distances use the pixel size stored by the scanner (patient plane), shown
+        bottom-right of the image, e.g. 0.280 mm/px. Plain X-rays usually only store the pixel size at the
+        detector, so anatomy measures about 5–15&nbsp;% larger than it really is. For exact X-ray values use
+        <b>Calibrate</b> in the Measurements panel with an object of known size.</p>
+      <p class="note">This viewer is for looking at your own images. It is not a medical device; diagnosis should come from your doctor's report.</p>
+      <button id="helpClose" class="btn">Close</button>
+    </div>
+  </div>
+</body>
+</html>
