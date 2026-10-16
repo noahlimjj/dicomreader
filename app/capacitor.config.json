@@ -1,0 +1,19 @@
+{
+  "appId": "app.dicomreader.viewer",
+  "appName": "DICOM Reader",
+  "webDir": "dist",
+  "backgroundColor": "#0b0d10",
+  "ios": {
+    "backgroundColor": "#0b0d10",
+    "contentInset": "never",
+    "scrollEnabled": false,
+    "allowsLinkPreview": false
+  },
+  "android": {
+    "backgroundColor": "#0b0d10",
+    "allowMixedContent": false
+  },
+  "plugins": {
+    "CapacitorHttp": {"enabled": false}
+  }
+}

@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">DICOM Reader</string>
+    <string name="title_activity_main">DICOM Reader</string>
+    <string name="package_name">app.dicomreader.viewer</string>
+    <string name="custom_url_scheme">app.dicomreader.viewer</string>
+</resources>

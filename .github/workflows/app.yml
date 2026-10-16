@@ -1,0 +1,178 @@
+name: DICOM Reader app
+
+on:
+  push:
+    branches: [main, mobile-app]
+    paths: ['app/**', '.github/workflows/app.yml']
+  pull_request:
+    paths: ['app/**', '.github/workflows/app.yml']
+  workflow_dispatch:
+
+concurrency:
+  group: app-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    working-directory: app
+
+jobs:
+  test:
+    name: Tests (decoders + iPhone / Android / desktop browsers)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: app/package-lock.json
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: npm ci
+      - name: Reference data (pydicom)
+        run: |
+          python -m pip install --quiet pydicom numpy pylibjpeg pylibjpeg-libjpeg pylibjpeg-openjpeg pylibjpeg-rle pyjpegls
+          python -I test/tools/make_golden.py
+      - name: Unit tests (decoders vs pydicom)
+        run: npx vitest run
+      - run: npx playwright install --with-deps chromium webkit
+      - name: End-to-end tests
+        run: npx playwright test
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: playwright-report
+          path: app/test-results/
+          retention-days: 7
+
+  safari:
+    name: Tests in Safari's engine on macOS (iPhone emulation)
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: app/package-lock.json
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: npm ci
+      - name: Reference data (pydicom)
+        run: |
+          python -m pip install --quiet pydicom numpy pylibjpeg pylibjpeg-libjpeg pylibjpeg-openjpeg pylibjpeg-rle pyjpegls
+          python -I test/tools/make_golden.py
+      - run: npx playwright install webkit
+      - name: End-to-end tests (WebKit, iPhone 15)
+        run: npx playwright test --project=iphone-webkit
+
+  web:
+    name: Web version (GitHub Pages)
+    needs: test
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: app/package-lock.json
+      - run: npm ci
+      - run: npm run build
+      - name: Publish to the gh-pages branch
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: app/dist
+          force_orphan: true
+
+  android:
+    name: Android APK
+    needs: test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: app/package-lock.json
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+      - run: npm ci
+      - run: npm run build
+      - run: npx cap sync android
+      - name: Build debug APK
+        working-directory: app/android
+        run: |
+          chmod +x gradlew
+          ./gradlew assembleDebug --no-daemon --stacktrace
+          cp app/build/outputs/apk/debug/app-debug.apk "$GITHUB_WORKSPACE/DICOM-Reader.apk"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: DICOM-Reader-android
+          path: DICOM-Reader.apk
+      - name: Rolling preview release (download the APK on the phone)
+        if: github.event_name == 'push'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: android-preview
+          name: Android preview (latest build)
+          prerelease: true
+          make_latest: false
+          body: |
+            Debug build of the latest commit (${{ github.sha }}) on ${{ github.ref_name }}.
+            On an Android phone: download DICOM-Reader.apk, open it and allow installing from this source.
+          files: DICOM-Reader.apk
+
+  ios:
+    name: iOS simulator build + screenshot
+    needs: test
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: app/package-lock.json
+      - run: npm ci
+      - name: Build web app (opens the sample on launch, for the screenshot)
+        run: VITE_AUTOLOAD_SAMPLE=1 npm run build
+      - run: npx cap sync ios
+      - name: Build for the simulator (no signing)
+        working-directory: app/ios/App
+        run: |
+          set -o pipefail
+          xcodebuild -project App.xcodeproj -scheme App -configuration Debug \
+            -sdk iphonesimulator -destination 'generic/platform=iOS Simulator' \
+            -derivedDataPath build CODE_SIGNING_ALLOWED=NO build | tail -40
+      - name: Run in the simulator and take screenshots
+        working-directory: app/ios/App
+        run: |
+          DEVICE=$(xcrun simctl list devices available | grep -E "iPhone 1[5-9]" | grep -v Plus | head -1 | sed -E 's/.*\(([0-9A-F-]{36})\).*/\1/')
+          echo "Simulator: $DEVICE"
+          xcrun simctl boot "$DEVICE"
+          xcrun simctl bootstatus "$DEVICE" -b
+          APP=$(find build/Build/Products -name "App.app" -maxdepth 3 | head -1)
+          xcrun simctl install "$DEVICE" "$APP"
+          xcrun simctl launch "$DEVICE" app.dicomreader.viewer
+          sleep 25
+          mkdir -p "$GITHUB_WORKSPACE/screens"
+          xcrun simctl io "$DEVICE" screenshot "$GITHUB_WORKSPACE/screens/ios-sample.png"
+          xcrun simctl ui "$DEVICE" appearance dark
+          xcrun simctl spawn "$DEVICE" log show --last 1m --predicate 'process == "App"' --style compact | grep -iE "error|exception|⚡️" | tail -40 || true
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ios-simulator-screenshot
+          path: screens/

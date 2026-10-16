@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#16324f"/><stop offset="1" stop-color="#0a1320"/></linearGradient>
+    <radialGradient id="brain" cx="0.5" cy="0.45" r="0.6"><stop offset="0" stop-color="#9aa6b3"/><stop offset="1" stop-color="#5e6a77"/></radialGradient>
+  </defs>
+  <rect width="512" height="512" rx="112" fill="url(#bg)"/>
+  <ellipse cx="256" cy="262" rx="150" ry="182" fill="#eef3f8"/>
+  <ellipse cx="256" cy="262" rx="128" ry="160" fill="url(#brain)"/>
+  <path d="M232 214c-6 30-6 70 4 96M280 214c6 30 6 70-4 96" stroke="#1d2833" stroke-width="18" stroke-linecap="round" fill="none"/>
+  <path d="M256 104v316" stroke="#eef3f8" stroke-width="6" opacity="0.6"/>
+  <path d="M70 262h372" stroke="#ffb547" stroke-width="14" stroke-dasharray="26 18" stroke-linecap="round"/>
+</svg>

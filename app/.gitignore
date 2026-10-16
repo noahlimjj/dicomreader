@@ -1,0 +1,11 @@
+node_modules/
+dist/
+test-results/
+playwright-report/
+test-library.log
+# test data: downloaded / generated locally (see test/tools)
+test/data/
+test/golden/
+test/library/
+*.tmp.mjs
+__pycache__/
