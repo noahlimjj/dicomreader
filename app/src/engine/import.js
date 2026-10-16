@@ -123,3 +123,39 @@ export async function filesFromDrop(dataTransfer) {
   for (const r of roots) await walkEntry(r, '', out);
   return out;
 }
+
+/**
+ * Parse a Google Drive shared link or file ID into a direct download URL.
+ * Supports:
+ *  - https://drive.google.com/file/d/<ID>/view?usp=sharing
+ *  - https://drive.google.com/open?id=<ID>
+ *  - https://drive.google.com/uc?id=<ID>&export=download
+ *  - https://drive.usercontent.google.com/download?id=<ID>
+ *  - https://drive.google.com/drive/folders/<ID> (identifies as folder)
+ *  - direct https:// URLs to .dcm / .zip files
+ */
+export function parseGoogleDriveUrl(input) {
+  const raw = String(input || '').trim();
+  if (!raw) return null;
+  if (/drive\.google\.com\/drive\/(u\/\d+\/)?folders\/([a-zA-Z0-9_-]{10,})/i.test(raw)) {
+    const m = raw.match(/folders\/([a-zA-Z0-9_-]{10,})/i);
+    return {kind: 'folder', id: m[1]};
+  }
+  const fileMatch =
+    raw.match(/drive\.google\.com\/file\/d\/([a-zA-Z0-9_-]{10,})/i) ||
+    raw.match(/drive\.(?:google|usercontent)\.com\/(?:open|uc|download)\?(?:[^#]*&)?id=([a-zA-Z0-9_-]{10,})/i) ||
+    raw.match(/[?&]id=([a-zA-Z0-9_-]{18,})/i);
+  if (fileMatch) {
+    const id = fileMatch[1];
+    return {
+      kind: 'file',
+      id,
+      downloadUrl: `https://drive.usercontent.google.com/download?id=${encodeURIComponent(id)}&export=download&confirm=t`,
+    };
+  }
+  if (/^https?:\/\//i.test(raw)) {
+    return {kind: 'url', downloadUrl: raw};
+  }
+  return null;
+}
+

@@ -74,3 +74,31 @@ describe.skipIf(!existsSync(join(DATA, 'CT_small.dcm')))('tag listing', () => {
     expect(byKey['7FE00010'].value).toMatch(/pixel data/);
   });
 });
+
+describe('Google Drive URL parsing', async () => {
+  const {parseGoogleDriveUrl} = await import('../src/engine/import.js');
+
+  it('parses file/d/<ID> view links', () => {
+    const res = parseGoogleDriveUrl('https://drive.google.com/file/d/1AbCdEfGhIjKlMnOpQrStUvWxYz012345/view?usp=sharing');
+    expect(res).toEqual({
+      kind: 'file',
+      id: '1AbCdEfGhIjKlMnOpQrStUvWxYz012345',
+      downloadUrl: 'https://drive.usercontent.google.com/download?id=1AbCdEfGhIjKlMnOpQrStUvWxYz012345&export=download&confirm=t',
+    });
+  });
+
+  it('parses open?id=<ID> and uc?id=<ID> links', () => {
+    const res = parseGoogleDriveUrl('https://drive.google.com/open?id=1AbCdEfGhIjKlMnOpQrStUvWxYz012345');
+    expect(res?.kind).toBe('file');
+    expect(res?.id).toBe('1AbCdEfGhIjKlMnOpQrStUvWxYz012345');
+  });
+
+  it('detects Google Drive folder links', () => {
+    const res = parseGoogleDriveUrl('https://drive.google.com/drive/folders/1AbCdEfGhIjKlMnOpQrStUvWxYz012345?usp=drive_link');
+    expect(res).toEqual({
+      kind: 'folder',
+      id: '1AbCdEfGhIjKlMnOpQrStUvWxYz012345',
+    });
+  });
+});
+

@@ -51,6 +51,7 @@
       <symbol id="i-trash" viewBox="0 0 24 24"><path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13"/></symbol>
       <symbol id="i-sliders" viewBox="0 0 24 24"><path d="M6 4v16M18 4v16M12 4v16"/><circle cx="6" cy="14" r="2" fill="currentColor"/><circle cx="12" cy="8" r="2" fill="currentColor"/><circle cx="18" cy="16" r="2" fill="currentColor"/></symbol>
       <symbol id="i-probe" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 2v5M12 17v5M2 12h5M17 12h5"/></symbol>
+      <symbol id="i-drive" viewBox="0 0 24 24"><path d="M9 3h6l6 10.5-3 5.5H6L3 13.5z"/><path d="M9 3l6 10.5H3M15 3L6 19M21 13.5H9"/></symbol>
       <symbol id="i-logo" viewBox="0 0 64 64"><rect x="4" y="4" width="56" height="56" rx="14" fill="#11161d" stroke="#3a8dde" stroke-width="3"/><ellipse cx="32" cy="33" rx="17" ry="20" fill="none" stroke="#e8eef5" stroke-width="4"/><ellipse cx="32" cy="33" rx="11" ry="14" fill="#5b6774" stroke="none"/><path d="M27 29c2-3 8-3 10 0" stroke="#11161d" stroke-width="3" fill="none"/><path d="M8 33h48" stroke="#ffb547" stroke-width="2.5" stroke-dasharray="4 3"/></symbol>
     </defs>
   </svg>
@@ -103,12 +104,13 @@
           <p class="lead">Look through CT, MRI, X-ray and ultrasound scans: scroll through slices, adjust brightness, measure.</p>
           <div id="emptyActions" class="empty-actions">
             <button id="openFilesBig" class="btn primary big"><svg><use href="#i-open"/></svg> Open scans</button>
+            <button id="openDriveBig" class="btn big"><svg><use href="#i-drive"/></svg> Choose from Google Drive</button>
             <button id="openFolderBig" class="btn big" hidden>Open a folder</button>
             <button id="sampleBtn" class="btn big ghost">Try a sample scan</button>
           </div>
           <div id="progress" class="progress" hidden><div class="bar"><div id="progressBar"></div></div><div id="progressMsg" class="muted"></div></div>
           <ul class="tips">
-            <li>Open a whole folder (e.g. a hospital CD copied to your phone), pick files, or a <b>.zip</b> from your patient portal.</li>
+            <li>Open a whole folder (e.g. a hospital CD copied to your phone), pick files or a <b>.zip</b>, or choose directly from <b>Google Drive</b>.</li>
             <li class="desk-only">You can also drag a folder or files onto this window.</li>
             <li><b>Private:</b> your images are read on this device and never uploaded.</li>
             <li class="muted">For viewing your own images. Not a medical device: diagnosis should come from your doctor's report.</li>

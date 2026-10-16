@@ -1,6 +1,6 @@
 // DICOM Mobile: app shell, tools, measurements, two views with reference lines.
 import {Loader, MOBILE} from './engine/loader.js';
-import {entriesFromFiles, entriesFromUrls, filesFromDrop, maybeDicom} from './engine/import.js';
+import {entriesFromFiles, entriesFromUrls, filesFromDrop, parseGoogleDriveUrl} from './engine/import.js';
 import {makeItems, groupSeries, companionSeries, spacingInfo, windowPresets, formatDate, formatAge, PROJECTION} from './model/study.js';
 import {
   planeOf, sameSpace, pixelToPatient, patientToPixel, intersection, nearestSlice, dot, lettersForPixelDirection,
@@ -10,7 +10,8 @@ import {attachGestures} from './view/gestures.js';
 import {minMaxWindow, percentileWindow, pixelValue, renderPixels, defaultWindow} from './view/render.js';
 import {MEASURE_TOOLS, newMeasurement, quantify, drawMeasurement, hitTest} from './view/measure.js';
 import {openMenu, closeMenu, isMenuOpen} from './ui/menu.js';
-import {initNative, shareBlob, isNative, platform, pickNativeFolder} from './ui/native.js';
+import {initNative, shareBlob, isNative, platform, pickNativeFolder, pickNativeFiles, downloadNativeUrl} from './ui/native.js';
+
 
 const $ = (id) => document.getElementById(id);
 const BASE = import.meta.env.BASE_URL;
@@ -1206,9 +1207,19 @@ function moreMenu(anchor) {
     {label: 'Save / share this view', icon: 'share', disabled: !loaded, key: 'X', action: exportView},
     '-',
     {label: 'Open files or a ZIP', icon: 'open', action: pickFiles},
+    {label: 'Choose from Google Drive', icon: 'drive', action: openGoogleDrive},
     ...(canPickFolder ? [{label: 'Open a folder', icon: 'open', action: pickFolder}] : []),
     {label: 'Close scans', icon: 'close', disabled: !state.series.length, action: closeStudy},
     {label: 'Help & about', icon: 'help', key: '?', action: () => openSheet('help')},
+  ]);
+}
+
+function openSourceMenu(anchor) {
+  openMenu(anchor, [
+    {title: 'Open scans'},
+    {label: 'Choose files or a ZIP', icon: 'open', action: pickFiles},
+    {label: 'Choose from Google Drive', icon: 'drive', action: openGoogleDrive},
+    ...(canPickFolder ? [{label: 'Open a folder', icon: 'open', action: pickFolder}] : []),
   ]);
 }
 
@@ -1264,12 +1275,19 @@ function openSheet(name, toggle = false) {
   state.sheet = name;
   $('sheet').hidden = false;
   $('sheet').classList.toggle('tall', name === 'tags' || name === 'help');
-  const titles = {measure: 'Measurements', tags: 'DICOM tags', window: 'Brightness / contrast', help: 'Help & about'};
+  const titles = {
+    measure: 'Measurements',
+    tags: 'DICOM tags',
+    window: 'Brightness / contrast',
+    drive: 'Google Drive',
+    help: 'Help & about',
+  };
   $('sheetTitle').textContent = titles[name];
   if (name === 'measure') renderMeasurePanel();
   updateSelectionBar();
   if (name === 'tags') renderTagsPanel(true);
   if (name === 'window') renderWindowPanel();
+  if (name === 'drive') renderDrivePanel();
   if (name === 'help') renderHelpPanel();
   requestAnimationFrame(() => vps.forEach((v) => v.resize()));
 }
@@ -1549,6 +1567,107 @@ function updateWindowPanel() {
   if (document.activeElement !== $('wlWidth')) $('wlWidth').value = String(Math.round(v.voi.width));
 }
 
+function renderDrivePanel() {
+  if (state.sheet !== 'drive') return;
+  const body = $('sheetBody');
+  const howTip = platform === 'ios' ?
+    'Tap <b>Browse Google Drive files</b> below, then in the Files sheet tap <b>Browse → Locations → Google Drive</b> (enable Google Drive under ⋯ → Edit if needed) and pick your <b>.zip</b> or DICOM files.' :
+    platform === 'android' ?
+      'Tap <b>Browse Google Drive files</b> below to open Google Drive directly and select your <b>.zip</b> study or DICOM files.' :
+      'Tap <b>Browse Google Drive files</b> below and choose your <b>Google Drive</b> folder or downloaded <b>.zip</b> / DICOM files.';
+  body.innerHTML = `
+    <div style="margin: 10px 0">
+      <button id="driveBrowseBtn" class="btn primary big" style="width:100%">
+        <svg><use href="#i-drive"/></svg> Browse Google Drive files
+      </button>
+    </div>
+    <p class="note">${howTip}</p>
+    <h3>Or paste a Google Drive link</h3>
+    <p class="note">If someone shared a Google Drive <b>.zip</b> or DICOM file link (set to <i>Anyone with the link</i>), paste it here:</p>
+    <div class="row">
+      <input id="driveUrlInput" type="text" placeholder="https://drive.google.com/file/d/…" autocomplete="off" spellcheck="false">
+      <button id="driveUrlBtn" class="btn primary small">Open link</button>
+    </div>
+    <p class="muted" style="font-size:12px">Tip: You can also open the Google Drive app, tap <b>⋯ → Open in</b> on any <b>.zip</b> or <b>.dcm</b> file, and choose <b>DICOM Mobile</b>.</p>`;
+  body.querySelector('#driveBrowseBtn').addEventListener('click', () => {
+    closeSheet();
+    pickFromGoogleDrive();
+  });
+  const submitUrl = () => {
+    const val = body.querySelector('#driveUrlInput')?.value || '';
+    openGoogleDriveLink(val);
+  };
+  body.querySelector('#driveUrlBtn').addEventListener('click', submitUrl);
+  body.querySelector('#driveUrlInput').addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') submitUrl();
+  });
+}
+
+function openGoogleDrive() {
+  openSheet('drive');
+}
+
+async function pickFromGoogleDrive() {
+  if (!isNative) {
+    $('filesInput').click();
+    return;
+  }
+  try {
+    showEmpty(true);
+    setProgress('Opening from Google Drive…', 0);
+    const entries = await pickNativeFiles({drive: true}, (m) => setProgress(m, 0));
+    if (!entries) {
+      setProgress(null);
+      if (!state.series.length) showEmpty(true); else showEmpty(false);
+      return;
+    }
+    await openEntries(entries);
+  } catch (e) {
+    setProgress(null);
+    if (!state.series.length) showEmpty(true); else showEmpty(false);
+    toast(e.message || String(e));
+  }
+}
+
+async function openGoogleDriveLink(input) {
+  const parsed = parseGoogleDriveUrl(input);
+  if (!parsed) {
+    toast('Paste a Google Drive file link (https://drive.google.com/file/d/…).');
+    return;
+  }
+  if (parsed.kind === 'folder') {
+    toast('Google Drive folder links cannot be downloaded as a single file. Use "Browse Google Drive files" above, or share a .zip link.');
+    return;
+  }
+  closeSheet();
+  state.timing = {start: performance.now()};
+  try {
+    showEmpty(true);
+    setProgress('Downloading from Google Drive…', 0);
+    if (isNative) {
+      const entries = await downloadNativeUrl(parsed.downloadUrl, parsed.id ? `drive-${parsed.id}` : 'drive-scan', (m) => setProgress(m, 0));
+      await openEntries(entries);
+      return;
+    }
+    const r = await fetch(parsed.downloadUrl);
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    const ct = (r.headers.get('content-type') || '').toLowerCase();
+    if (ct.includes('text/html')) {
+      throw new Error('Google Drive returned a web page. Make sure the file is shared as "Anyone with the link", or use "Browse Google Drive files".');
+    }
+    const blob = await r.blob();
+    const head = new Uint8Array(await blob.slice(0, 4).arrayBuffer());
+    const isZipHeader = head[0] === 0x50 && head[1] === 0x4b && head[2] === 0x03 && head[3] === 0x04;
+    const ext = isZipHeader ? '.zip' : '.dcm';
+    const file = new File([blob], `drive-${parsed.id || 'scan'}${ext}`, {type: blob.type});
+    await openFiles([file]);
+  } catch (e) {
+    setProgress(null);
+    if (!state.series.length) showEmpty(true); else showEmpty(false);
+    toast(`Could not download from Google Drive: ${e.message || e}. Try "Browse Google Drive files" instead.`);
+  }
+}
+
 function renderHelpPanel() {
   const touchRows = [
     ['Drag up / down (Scroll)', 'Next / previous image'],
@@ -1678,8 +1797,26 @@ function closeDrawerOnPhone() {
   if (!matchMedia('(min-width: 900px)').matches) toggleDrawer(false);
 }
 
-function pickFiles() {
-  $('filesInput').click();
+async function pickFiles() {
+  if (!isNative) {
+    $('filesInput').click();
+    return;
+  }
+  try {
+    showEmpty(true);
+    setProgress('Copying files…', 0);
+    const entries = await pickNativeFiles({drive: false}, (m) => setProgress(m, 0));
+    if (!entries) {
+      setProgress(null);
+      if (!state.series.length) showEmpty(true); else showEmpty(false);
+      return;
+    }
+    await openEntries(entries);
+  } catch (e) {
+    setProgress(null);
+    if (!state.series.length) showEmpty(true); else showEmpty(false);
+    toast(e.message || String(e));
+  }
 }
 
 const canPickFolder = isNative || (!TOUCH && 'webkitdirectory' in document.createElement('input'));
@@ -1692,18 +1829,16 @@ async function pickFolder() {
   try {
     showEmpty(true);
     setProgress('Copying the folder…', 0);
-    const entries = await pickNativeFolder();
+    const entries = await pickNativeFolder((m) => setProgress(m, 0));
     if (!entries) {
       setProgress(null);
       if (!state.series.length) showEmpty(true); else showEmpty(false);
       return;
     }
-    // skip the non-DICOM files of a CD (viewer programs, html, ...)
-    const keep = entries.filter((e) => maybeDicom(e.name, e.size));
-    await openEntries(keep);
+    await openEntries(entries);
   } catch (e) {
     setProgress(null);
-    if (!state.series.length) showEmpty(true);
+    if (!state.series.length) showEmpty(true); else showEmpty(false);
     toast(e.message || String(e));
   }
 }
@@ -1802,7 +1937,7 @@ function bindUi() {
   $('presetBtn').addEventListener('click', (e) => presetsMenu(e.currentTarget));
   $('playBtn').addEventListener('click', () => activeVp().togglePlay());
   $('moreBtn').addEventListener('click', (e) => moreMenu(e.currentTarget));
-  $('openBtn').addEventListener('click', pickFiles);
+  $('openBtn').addEventListener('click', (e) => openSourceMenu(e.currentTarget));
   $('seriesBtn').addEventListener('click', () => toggleDrawer());
   $('scrim').addEventListener('click', () => toggleDrawer(false));
   for (const b of document.querySelectorAll('[data-close="seriesPanel"]')) b.addEventListener('click', () => toggleDrawer(false));
@@ -1810,6 +1945,7 @@ function bindUi() {
   $('undoBtn').addEventListener('click', undo);
   $('redoBtn').addEventListener('click', redo);
   $('openFilesBig').addEventListener('click', pickFiles);
+  $('openDriveBig').addEventListener('click', openGoogleDrive);
   $('openFolderBig').addEventListener('click', pickFolder);
   $('sampleBtn').addEventListener('click', openSample);
   for (const id of ['filesInput', 'folderInput']) {
@@ -1854,5 +1990,6 @@ initNative((files) => openFiles(files), onBack);
 $('openFolderBig').hidden = !canPickFolder;
 
 // handy for debugging and for the end-to-end tests
-window.dicomReader = {state, vps, loader, openFiles, openSample, setTool, setLayout, showSeries, activeVp};
+window.dicomReader = {state, vps, loader, openFiles, openSample, openGoogleDrive, openGoogleDriveLink, setTool, setLayout, showSeries, activeVp};
 if (new URLSearchParams(location.search).has('sample') || import.meta.env.VITE_AUTOLOAD_SAMPLE === '1') openSample();
+

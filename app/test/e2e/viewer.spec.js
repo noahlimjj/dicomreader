@@ -170,3 +170,20 @@ test('export saves a PNG (desktop)', async ({page}, testInfo) => {
   const d = await download;
   expect(d.suggestedFilename()).toMatch(/^CT_Axial.*\.png$/);
 });
+
+test('Google Drive option is available in empty screen, Open menu and More menu', async ({page}) => {
+  await page.goto('./');
+  await expect(page.locator('#openDriveBig')).toBeVisible();
+  await page.click('#openDriveBig');
+  await expect(page.locator('#sheetTitle')).toHaveText('Google Drive');
+  await expect(page.locator('#driveBrowseBtn')).toBeVisible();
+  await expect(page.locator('#driveUrlInput')).toBeVisible();
+  await page.click('#sheetClose');
+  await expect(page.locator('#sheet')).toBeHidden();
+
+  await page.click('#openBtn');
+  await expect(page.locator('#menu button', {hasText: 'Choose from Google Drive'})).toBeVisible();
+  await page.locator('#menu button', {hasText: 'Choose from Google Drive'}).click();
+  await expect(page.locator('#sheetTitle')).toHaveText('Google Drive');
+});
+

@@ -1,6 +1,7 @@
 // Native (Capacitor) integration: sharing exported images, files opened with
 // the app ("Open in…"), Android back button. All optional on the web.
 import {Capacitor} from '@capacitor/core';
+import {entriesFromFiles, maybeDicom} from '../engine/import.js';
 
 export const isNative = Capacitor.isNativePlatform();
 export const platform = Capacitor.getPlatform(); // 'ios' | 'android' | 'web'
@@ -73,22 +74,73 @@ export async function initNative(onFiles, onBack) {
 }
 
 /**
+ * Convert native-copied file records `{name, path, size}` into loader entries,
+ * automatically unpacking any `.zip` archives via `entriesFromFiles`.
+ */
+async function nativeFilesToEntries(files, onStatus = () => {}) {
+  const entries = [];
+  const zipFiles = [];
+  for (const f of files) {
+    if (/\.zip$/i.test(f.name)) {
+      const r = await fetch(Capacitor.convertFileSrc(`file://${f.path}`));
+      if (!r.ok) throw new Error(`Cannot read ${f.name}`);
+      const blob = await r.blob();
+      const file = new File([blob], f.name, {type: 'application/zip'});
+      file.relativePath = f.name;
+      zipFiles.push(file);
+    } else if (maybeDicom(f.name, f.size)) {
+      entries.push({
+        key: `${f.path}|${f.size}`,
+        name: f.name,
+        size: f.size,
+        getSource: async () => {
+          const r = await fetch(Capacitor.convertFileSrc(`file://${f.path}`));
+          if (!r.ok) throw new Error(`Cannot read ${f.name}`);
+          return r.arrayBuffer();
+        },
+      });
+    }
+  }
+  if (zipFiles.length) {
+    entries.push(...await entriesFromFiles(zipFiles, onStatus));
+  }
+  return entries;
+}
+
+/**
  * Native folder picker (iOS Files / Android): the folder is copied into the
  * app's temporary folder. Returns import entries, or null when cancelled.
  */
-export async function pickNativeFolder() {
+export async function pickNativeFolder(onStatus) {
   const {registerPlugin} = await import('@capacitor/core');
   const FolderPicker = registerPlugin('FolderPicker');
   const res = await FolderPicker.pickFolder();
   if (!res || res.cancelled || !res.files) return null;
-  return res.files.map((f) => ({
-    key: `${f.path}|${f.size}`,
-    name: f.name,
-    size: f.size,
-    getSource: async () => {
-      const r = await fetch(Capacitor.convertFileSrc(`file://${f.path}`));
-      if (!r.ok) throw new Error(`Cannot read ${f.name}`);
-      return r.arrayBuffer();
-    },
-  }));
+  return nativeFilesToEntries(res.files, onStatus);
 }
+
+/**
+ * Native file picker (iOS Files / Android Documents UI, including Google Drive).
+ * When `drive: true` is passed on Android, opens directly in Google Drive.
+ * Returns import entries, or null when cancelled.
+ */
+export async function pickNativeFiles({drive = false} = {}, onStatus) {
+  const {registerPlugin} = await import('@capacitor/core');
+  const FolderPicker = registerPlugin('FolderPicker');
+  const res = await FolderPicker.pickFiles({drive});
+  if (!res || res.cancelled || !res.files) return null;
+  return nativeFilesToEntries(res.files, onStatus);
+}
+
+/**
+ * Download a remote URL (such as a shared Google Drive file link) natively
+ * without browser CORS limits, and return import entries.
+ */
+export async function downloadNativeUrl(url, filename = 'google-drive-scan', onStatus) {
+  const {registerPlugin} = await import('@capacitor/core');
+  const FolderPicker = registerPlugin('FolderPicker');
+  const res = await FolderPicker.downloadUrl({url, filename});
+  if (!res || !res.files) return [];
+  return nativeFilesToEntries(res.files, onStatus);
+}
+
