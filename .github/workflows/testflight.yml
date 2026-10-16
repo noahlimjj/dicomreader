@@ -1,0 +1,89 @@
+name: iOS → TestFlight
+
+# Builds, signs and uploads the iOS app to App Store Connect / TestFlight from
+# a macOS runner, so no Mac is needed. Needs three repository secrets from an
+# App Store Connect API key (Users and Access → Integrations → App Store
+# Connect API, role "App Manager"):
+#   ASC_KEY_ID      the key ID
+#   ASC_ISSUER_ID   the issuer ID (shown above the keys list)
+#   ASC_KEY_P8      the full text of the downloaded AuthKey_XXXX.p8 file
+# Run it from the Actions tab ("Run workflow") or push a tag like ios-v0.1.0.
+
+on:
+  workflow_dispatch:
+  push:
+    tags: ['ios-v*']
+
+jobs:
+  testflight:
+    runs-on: macos-15
+    defaults:
+      run:
+        working-directory: app
+    env:
+      TEAM_ID: 44BP374T6C
+    steps:
+      - name: Check the API key secrets
+        working-directory: .
+        env:
+          K: ${{ secrets.ASC_KEY_ID }}
+          I: ${{ secrets.ASC_ISSUER_ID }}
+          P: ${{ secrets.ASC_KEY_P8 }}
+        run: |
+          if [ -z "$K" ] || [ -z "$I" ] || [ -z "$P" ]; then
+            echo "::error::Add the ASC_KEY_ID, ASC_ISSUER_ID and ASC_KEY_P8 repository secrets first (see the top of this file)."
+            exit 1
+          fi
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: app/package-lock.json
+      - run: npm ci
+      - run: npm run build
+      - run: npx cap sync ios
+      - name: API key and build number
+        env:
+          P: ${{ secrets.ASC_KEY_P8 }}
+          K: ${{ secrets.ASC_KEY_ID }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/keys"
+          printf '%s\n' "$P" > "$RUNNER_TEMP/keys/AuthKey_$K.p8"
+          echo "KEY_PATH=$RUNNER_TEMP/keys/AuthKey_$K.p8" >> "$GITHUB_ENV"
+          sed -i '' "s/CURRENT_PROJECT_VERSION = [0-9]*;/CURRENT_PROJECT_VERSION = $((100 + GITHUB_RUN_NUMBER));/" ios/App/App.xcodeproj/project.pbxproj
+          cat > "$RUNNER_TEMP/ExportOptions.plist" <<EOF
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0"><dict>
+            <key>method</key><string>app-store-connect</string>
+            <key>destination</key><string>upload</string>
+            <key>teamID</key><string>$TEAM_ID</string>
+            <key>signingStyle</key><string>automatic</string>
+            <key>manageAppVersionAndBuildNumber</key><false/>
+          </dict></plist>
+          EOF
+      - name: Archive (signed with the API key)
+        working-directory: app/ios/App
+        env:
+          K: ${{ secrets.ASC_KEY_ID }}
+          I: ${{ secrets.ASC_ISSUER_ID }}
+        run: |
+          set -o pipefail
+          xcodebuild -project App.xcodeproj -scheme App -configuration Release \
+            -destination 'generic/platform=iOS' -archivePath "$RUNNER_TEMP/App.xcarchive" \
+            -allowProvisioningUpdates -authenticationKeyPath "$KEY_PATH" \
+            -authenticationKeyID "$K" -authenticationKeyIssuerID "$I" \
+            DEVELOPMENT_TEAM=$TEAM_ID CODE_SIGN_STYLE=Automatic archive | tail -30
+      - name: Upload to App Store Connect (TestFlight)
+        working-directory: app/ios/App
+        env:
+          K: ${{ secrets.ASC_KEY_ID }}
+          I: ${{ secrets.ASC_ISSUER_ID }}
+        run: |
+          set -o pipefail
+          xcodebuild -exportArchive -archivePath "$RUNNER_TEMP/App.xcarchive" \
+            -exportOptionsPlist "$RUNNER_TEMP/ExportOptions.plist" -exportPath "$RUNNER_TEMP/export" \
+            -allowProvisioningUpdates -authenticationKeyPath "$KEY_PATH" \
+            -authenticationKeyID "$K" -authenticationKeyIssuerID "$I" | tail -30
+          echo "Uploaded. It shows up in App Store Connect → TestFlight after processing (10–30 min)."
