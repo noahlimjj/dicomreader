@@ -271,6 +271,7 @@ public class FolderPickerPlugin extends Plugin {
                 int slash = folderName.lastIndexOf('/');
                 if (slash >= 0) folderName = folderName.substring(slash + 1);
                 if (folderName.isEmpty()) folderName = "folder";
+                JSArray files = new JSArray();
                 int[] counter = new int[]{0};
                 copyChildren(tree, rootId, "", dest, files, folderName, counter);
                 JSObject r = new JSObject();
