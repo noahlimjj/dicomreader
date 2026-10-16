@@ -136,10 +136,6 @@ def main():
     return 0 if done else 1
 
 
-if __name__ == "__main__":
-    status = main()
-    charsets()
-    sys.exit(status)
 
 
 CHARSET_FILES = [
@@ -169,3 +165,8 @@ def charsets():
     (GOLDEN / "charsets.json").write_text(json.dumps(out, ensure_ascii=False, indent=1), encoding="utf-8")
     print(f"{len(out)} character set files")
 
+
+if __name__ == "__main__":
+    status = main()
+    charsets()
+    sys.exit(status)
