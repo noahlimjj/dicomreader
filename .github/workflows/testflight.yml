@@ -35,6 +35,21 @@ jobs:
             exit 1
           fi
       - uses: actions/checkout@v4
+      - name: Select Xcode 26 (iOS 26 SDK)
+        working-directory: .
+        run: |
+          echo "Installed Xcode versions:"
+          ls -d /Applications/Xcode*.app || true
+          XCODE_26=$(ls -d /Applications/Xcode_26*.app 2>/dev/null | sort -V | tail -1)
+          if [ -n "$XCODE_26" ]; then
+            echo "Selecting $XCODE_26"
+            sudo xcode-select -s "$XCODE_26/Contents/Developer"
+          else
+            echo "::warning::Xcode 26 not found, selecting highest available"
+            LATEST=$(ls -d /Applications/Xcode*.app 2>/dev/null | sort -V | tail -1)
+            sudo xcode-select -s "$LATEST/Contents/Developer"
+          fi
+          xcodebuild -version
       - uses: actions/setup-node@v4
         with:
           node-version: 22
