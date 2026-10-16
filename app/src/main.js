@@ -10,7 +10,7 @@ import {attachGestures} from './view/gestures.js';
 import {minMaxWindow, percentileWindow, pixelValue, renderPixels, defaultWindow} from './view/render.js';
 import {MEASURE_TOOLS, newMeasurement, quantify, drawMeasurement, hitTest} from './view/measure.js';
 import {openMenu, closeMenu, isMenuOpen} from './ui/menu.js';
-import {initNative, shareBlob, isNative, platform} from './ui/native.js';
+import {initNative, shareBlob, isNative, platform, pickNativeFolder} from './ui/native.js';
 
 const $ = (id) => document.getElementById(id);
 const BASE = import.meta.env.BASE_URL;
@@ -1205,7 +1205,8 @@ function moreMenu(anchor) {
     {label: 'DICOM tags', icon: 'tags', disabled: !loaded, key: 'T', action: () => openSheet('tags')},
     {label: 'Save / share this view', icon: 'share', disabled: !loaded, key: 'X', action: exportView},
     '-',
-    {label: 'Open other scans', icon: 'open', action: pickFiles},
+    {label: 'Open files or a ZIP', icon: 'open', action: pickFiles},
+    ...(canPickFolder ? [{label: 'Open a folder', icon: 'open', action: pickFolder}] : []),
     {label: 'Close scans', icon: 'close', disabled: !state.series.length, action: closeStudy},
     {label: 'Help & about', icon: 'help', key: '?', action: () => openSheet('help')},
   ]);
@@ -1681,6 +1682,32 @@ function pickFiles() {
   $('filesInput').click();
 }
 
+const canPickFolder = isNative || (!TOUCH && 'webkitdirectory' in document.createElement('input'));
+
+async function pickFolder() {
+  if (!isNative) {
+    $('folderInput').click();
+    return;
+  }
+  try {
+    showEmpty(true);
+    setProgress('Copying the folder…', 0);
+    const entries = await pickNativeFolder();
+    if (!entries) {
+      setProgress(null);
+      if (!state.series.length) showEmpty(true); else showEmpty(false);
+      return;
+    }
+    // skip the non-DICOM files of a CD (viewer programs, html, ...)
+    const keep = entries.filter((e) => !/(^|\/)(\.|__MACOSX\/|DICOMDIR$)|\.(txt|html?|xml|pdf|exe|dll|ini|inf|ico|bmp|gif|png|jpe?g|js|css|json|zip|cab|msi|chm|log|sys|app)$/i.test(e.name) && e.size >= 128);
+    await openEntries(keep);
+  } catch (e) {
+    setProgress(null);
+    if (!state.series.length) showEmpty(true);
+    toast(e.message || String(e));
+  }
+}
+
 function onBack() {
   if (isMenuOpen()) {
     closeMenu();
@@ -1783,7 +1810,7 @@ function bindUi() {
   $('undoBtn').addEventListener('click', undo);
   $('redoBtn').addEventListener('click', redo);
   $('openFilesBig').addEventListener('click', pickFiles);
-  $('openFolderBig').addEventListener('click', () => $('folderInput').click());
+  $('openFolderBig').addEventListener('click', pickFolder);
   $('sampleBtn').addEventListener('click', openSample);
   for (const id of ['filesInput', 'folderInput']) {
     $(id).addEventListener('change', (e) => {
@@ -1824,7 +1851,7 @@ bindUi();
 vps.forEach(bindViewport);
 updateAll();
 initNative((files) => openFiles(files), onBack);
-if (!('webkitdirectory' in document.createElement('input')) || TOUCH) $('openFolderBig').hidden = true;
+$('openFolderBig').hidden = !canPickFolder;
 
 // handy for debugging and for the end-to-end tests
 window.dicomReader = {state, vps, loader, openFiles, openSample, setTool, setLayout, showSeries, activeVp};

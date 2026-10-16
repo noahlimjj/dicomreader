@@ -1,0 +1,12 @@
+{
+  "name": "@dicomreader/folder-picker",
+  "version": "0.1.0",
+  "description": "Pick a whole folder (e.g. a copied hospital CD) on iOS / Android; its files are copied into the app's temporary folder",
+  "private": true,
+  "license": "MIT",
+  "files": ["Package.swift", "ios/Sources", "android/src", "android/build.gradle"],
+  "capacitor": {
+    "ios": {"src": "ios"},
+    "android": {"src": "android"}
+  }
+}

@@ -71,3 +71,24 @@ export async function initNative(onFiles, onBack) {
     if (!onBack()) App.exitApp();
   });
 }
+
+/**
+ * Native folder picker (iOS Files / Android): the folder is copied into the
+ * app's temporary folder. Returns import entries, or null when cancelled.
+ */
+export async function pickNativeFolder() {
+  const {registerPlugin} = await import('@capacitor/core');
+  const FolderPicker = registerPlugin('FolderPicker');
+  const res = await FolderPicker.pickFolder();
+  if (!res || res.cancelled || !res.files) return null;
+  return res.files.map((f) => ({
+    key: `${f.path}|${f.size}`,
+    name: f.name,
+    size: f.size,
+    getSource: async () => {
+      const r = await fetch(Capacitor.convertFileSrc(`file://${f.path}`));
+      if (!r.ok) throw new Error(`Cannot read ${f.name}`);
+      return r.arrayBuffer();
+    },
+  }));
+}
