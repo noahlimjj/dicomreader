@@ -1,6 +1,6 @@
 {
-  "name": "DICOM Reader",
-  "short_name": "DICOM Reader",
+  "name": "DICOM Mobile",
+  "short_name": "DICOM Mobile",
   "description": "View CT, MRI, X-ray and ultrasound scans (DICOM) on your device.",
   "start_url": "./",
   "scope": "./",

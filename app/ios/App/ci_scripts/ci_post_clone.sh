@@ -3,7 +3,7 @@
 # resolves the Swift packages (Package.swift points into node_modules).
 set -e
 
-echo "=== DICOM Reader: post clone ==="
+echo "=== DICOM Mobile: post clone ==="
 APP_DIR="$(cd "$(dirname "$0")/../../.." && pwd)"   # .../app
 echo "App dir: $APP_DIR"
 

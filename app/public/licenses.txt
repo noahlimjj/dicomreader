@@ -1,4 +1,4 @@
-DICOM Reader uses the following open source software.
+DICOM Mobile uses the following open source software.
 
 ==== @capacitor/app 8.1.2 (MIT) ====
 

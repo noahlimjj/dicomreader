@@ -3,7 +3,7 @@ import {readFileSync, writeFileSync, existsSync, readdirSync} from 'node:fs';
 import {join} from 'node:path';
 
 const pkg = JSON.parse(readFileSync('package.json', 'utf8'));
-const out = ['DICOM Reader uses the following open source software.\n'];
+const out = ['DICOM Mobile uses the following open source software.\n'];
 const seen = new Set();
 function add(name) {
   if (seen.has(name)) return;

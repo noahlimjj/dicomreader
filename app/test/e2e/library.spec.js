@@ -1,6 +1,6 @@
 // Opens whole libraries of real-world files and checks every series renders.
 import {test, expect} from '@playwright/test';
-import {readdirSync, existsSync, readFileSync, writeFileSync, mkdirSync} from 'node:fs';
+import {readdirSync, existsSync, readFileSync, writeFileSync, mkdirSync, rmSync, copyFileSync} from 'node:fs';
 import {join, dirname} from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {ZipWriter, BlobWriter, Uint8ArrayReader} from '@zip.js/zip.js';
@@ -85,6 +85,44 @@ test('a ZIP of a study opens', async ({page}) => {
   writeFileSync(zipPath, Buffer.from(await blob.arrayBuffer()));
   const report = await openAndCheckAll(page, [zipPath], {expectSeries: 4, label: 'sample zip'});
   expect(report.map((r) => r.images).sort((a, b) => a - b)).toEqual([1, 44, 52, 76]);
+});
+
+test('a folder laid out like a hospital CD opens (nested folders, DICOMDIR, viewer files)', async ({page}, testInfo) => {
+  const cd = join(here, '..', '..', 'test-results', `HOSPITAL_CD-${testInfo.project.name}`);
+  rmSync(cd, {recursive: true, force: true});
+  const series = {SE000: 'axial', SE001: 'sagittal', SE002: 'coronal', SE003: 'scout'};
+  for (const [se, prefix] of Object.entries(series)) {
+    const dir = join(cd, 'DICOM', 'ST000', se);
+    mkdirSync(dir, {recursive: true});
+    readdirSync(SAMPLES).filter((f) => f.startsWith(prefix)).forEach((f, i) => {
+      copyFileSync(join(SAMPLES, f), join(dir, `IM${String(i).padStart(4, '0')}`));
+    });
+  }
+  // a second study on the same CD (a real CT) when the library is present
+  const realCt = join(LIBRARY, 'ct_chest');
+  let expected = 4;
+  if (existsSync(realCt)) {
+    const dir = join(cd, 'DICOM', 'ST001', 'SE000');
+    mkdirSync(dir, {recursive: true});
+    readdirSync(realCt).slice(0, 60).forEach((f, i) => copyFileSync(join(realCt, f), join(dir, `I${i}`)));
+    expected = 5;
+  }
+  writeFileSync(join(cd, 'DICOMDIR'), Buffer.alloc(4096, 1));
+  writeFileSync(join(cd, 'AUTORUN.INF'), '[autorun]\r\nopen=viewer.exe');
+  writeFileSync(join(cd, 'README.HTM'), '<html>viewer</html>');
+  mkdirSync(join(cd, 'VIEWER'), {recursive: true});
+  writeFileSync(join(cd, 'VIEWER', 'viewer.exe'), Buffer.alloc(200000, 7));
+  writeFileSync(join(cd, 'VIEWER', 'data.bin'), Buffer.alloc(5000, 3)); // unknown junk: must be skipped quietly
+  const report = await openAndCheckAll(page, cd, {expectSeries: expected, label: 'hospital CD folder', input: '#folderInput'});
+  expect(report.length).toBe(expected);
+  expect(report.map((r) => r.images).filter((n) => [76, 44, 52, 1].includes(n)).sort((a, b) => a - b)).toEqual([1, 44, 52, 76]);
+  // scroll through the axial series to the last image
+  await page.evaluate(() => {
+    const {state, vps, showSeries} = window.dicomReader;
+    showSeries(state.series.findIndex((s) => s.images === 76), vps[0]);
+  });
+  await page.keyboard.press('End');
+  await expect.poll(() => page.evaluate(() => window.dicomReader.vps[0].pos)).toBe(75);
 });
 
 // real studies (test/tools/fetch_library.py): folders through the folder

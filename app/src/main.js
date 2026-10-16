@@ -1,6 +1,6 @@
-// DICOM Reader: app shell, tools, measurements, two views with reference lines.
+// DICOM Mobile: app shell, tools, measurements, two views with reference lines.
 import {Loader, MOBILE} from './engine/loader.js';
-import {entriesFromFiles, entriesFromUrls, filesFromDrop} from './engine/import.js';
+import {entriesFromFiles, entriesFromUrls, filesFromDrop, maybeDicom} from './engine/import.js';
 import {makeItems, groupSeries, companionSeries, spacingInfo, windowPresets, formatDate, formatAge, PROJECTION} from './model/study.js';
 import {
   planeOf, sameSpace, pixelToPatient, patientToPixel, intersection, nearestSlice, dot, lettersForPixelDirection,
@@ -394,7 +394,7 @@ function updateTitle() {
   const v = activeVp();
   const s = v.series;
   if (!s) {
-    $('titleMain').textContent = 'DICOM Reader';
+    $('titleMain').textContent = 'DICOM Mobile';
     $('titleSub').textContent = '';
     return;
   }
@@ -1699,7 +1699,7 @@ async function pickFolder() {
       return;
     }
     // skip the non-DICOM files of a CD (viewer programs, html, ...)
-    const keep = entries.filter((e) => !/(^|\/)(\.|__MACOSX\/|DICOMDIR$)|\.(txt|html?|xml|pdf|exe|dll|ini|inf|ico|bmp|gif|png|jpe?g|js|css|json|zip|cab|msi|chm|log|sys|app)$/i.test(e.name) && e.size >= 128);
+    const keep = entries.filter((e) => maybeDicom(e.name, e.size));
     await openEntries(keep);
   } catch (e) {
     setProgress(null);

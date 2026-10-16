@@ -1,4 +1,4 @@
-# DICOM Reader: iPhone, Android and web
+# DICOM Mobile: iPhone, Android and web
 
 A mobile-first DICOM viewer. It opens CT, MRI, X-ray, ultrasound, mammography,
 PET and NM scans from files, folders or a hospital ZIP. Swipe to scroll through

@@ -1,6 +1,6 @@
 {
   "appId": "app.dicomreader.viewer",
-  "appName": "DICOM Reader",
+  "appName": "DICOM Mobile",
   "webDir": "dist",
   "backgroundColor": "#0b0d10",
   "ios": {

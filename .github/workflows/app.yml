@@ -1,4 +1,4 @@
-name: DICOM Reader app
+name: DICOM Mobile app
 
 on:
   push:
@@ -117,11 +117,11 @@ jobs:
         run: |
           chmod +x gradlew
           ./gradlew assembleDebug --no-daemon --stacktrace
-          cp app/build/outputs/apk/debug/app-debug.apk "$GITHUB_WORKSPACE/DICOM-Reader.apk"
+          cp app/build/outputs/apk/debug/app-debug.apk "$GITHUB_WORKSPACE/DICOM-Mobile.apk"
       - uses: actions/upload-artifact@v4
         with:
-          name: DICOM-Reader-android
-          path: DICOM-Reader.apk
+          name: DICOM-Mobile-android
+          path: DICOM-Mobile.apk
       - name: Rolling preview release (download the APK on the phone)
         if: github.event_name == 'push'
         uses: softprops/action-gh-release@v2
@@ -132,8 +132,8 @@ jobs:
           make_latest: false
           body: |
             Debug build of the latest commit (${{ github.sha }}) on ${{ github.ref_name }}.
-            On an Android phone: download DICOM-Reader.apk, open it and allow installing from this source.
-          files: DICOM-Reader.apk
+            On an Android phone: download DICOM-Mobile.apk, open it and allow installing from this source.
+          files: DICOM-Mobile.apk
 
   ios:
     name: iOS simulator build + screenshot

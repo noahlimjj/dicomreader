@@ -7,6 +7,11 @@ configure({useWebWorkers: false});
 const SKIP = /(^|\/)(\.|__MACOSX\/|DICOMDIR$|DIRFILE$|LOCKFILE$|VERSION$|autorun\.inf$|Thumbs\.db$)/i;
 const NOT_DICOM_EXT = /\.(txt|htm|html|xml|pdf|exe|dll|ini|inf|ico|bmp|gif|png|jpe?g|js|css|json|zip|ds_store|plist|sh|bat|cmd|cab|msi|app|chm|log|sys)$/i;
 
+/** false for files that are certainly not DICOM images (CD viewer programs, html, ...) */
+export function maybeDicom(path, size) {
+  return !SKIP.test(path) && !NOT_DICOM_EXT.test(path) && size >= 128;
+}
+
 function fileKey(path, size, modified) {
   return `${path}|${size}|${modified || 0}`;
 }

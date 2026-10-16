@@ -1,4 +1,4 @@
-# Getting DICOM Reader onto the App Store and Google Play
+# Getting DICOM Mobile onto the App Store and Google Play
 
 ## What is already done in this repo
 
@@ -30,7 +30,7 @@
 2. **App Store Connect → Apps → +**: new iOS app, bundle id
    `app.dicomreader.viewer` (register it under Certificates, Identifiers &
    Profiles if it is not offered), SKU `dicomreader`.
-   The name "DICOM Reader" may be taken: pick a distinct one (e.g. "ScanSlice",
+   The name "DICOM Mobile" may be taken: pick a distinct one (e.g. "ScanSlice",
    "Slice: CT & MRI Viewer"). Change `appName` in `capacitor.config.json` and
    `CFBundleDisplayName` in `ios/App/App/Info.plist` to match.
 3. **Xcode Cloud workflow** (in Xcode: Integrate → Create Workflow, or App Store
@@ -88,5 +88,5 @@ through them on your phone.
 • Reads JPEG, JPEG 2000, JPEG-LS, HTJ2K and RLE compressed files, multi-frame and colour images
 • Private: images never leave your device. No account, no tracking.
 
-DICOM Reader is for viewing your own images, for education and reference. It is
+DICOM Mobile is for viewing your own images, for education and reference. It is
 not a medical device and is not intended for diagnosis.
