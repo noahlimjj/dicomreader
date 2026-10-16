@@ -1,5 +1,10 @@
 # DICOM Viewer for Mac
 
+> **New: phone app.** [`app/`](app/README.md) is a rewrite of this viewer for
+> iPhone, Android and the web (Capacitor), with the same functions plus touch
+> gestures. It does not use dwv, so it can go on the App Store. Try it in a
+> browser: <https://noahlimjj.github.io/dicomreader/> (sample scan included).
+
 A simple, fast viewer for CT, MRI and X-ray images (DICOM), made for MacBooks.
 It runs locally in Safari or Chrome. Your images never leave your computer.
 
