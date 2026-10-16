@@ -5,8 +5,8 @@ import UniformTypeIdentifiers
 
 /// Lets the user pick a folder or files (including from Google Drive / iCloud Drive
 /// in the iOS Files sheet), or download a shared Google Drive / direct link.
-/// Picked or downloaded files are copied into the app's temporary folder so the
-/// web view can read them lazily; the previous import is deleted first.
+/// Picked or downloaded files are stored in Application Support/studies/<uuid> so
+/// saved studies remain available across app launches without re-importing.
 @objc(FolderPickerPlugin)
 public class FolderPickerPlugin: CAPPlugin, CAPBridgedPlugin, UIDocumentPickerDelegate {
     public let identifier = "FolderPickerPlugin"
@@ -14,10 +14,28 @@ public class FolderPickerPlugin: CAPPlugin, CAPBridgedPlugin, UIDocumentPickerDe
     public let pluginMethods: [CAPPluginMethod] = [
         CAPPluginMethod(name: "pickFolder", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "pickFiles", returnType: CAPPluginReturnPromise),
-        CAPPluginMethod(name: "downloadUrl", returnType: CAPPluginReturnPromise)
+        CAPPluginMethod(name: "downloadUrl", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "deletePaths", returnType: CAPPluginReturnPromise)
     ]
 
     private var pendingCall: CAPPluginCall?
+
+    private static let skipNames: Set<String> = [
+        "dicomdir", "dirfile", "lockfile", "version", "autorun.inf", "thumbs.db", ".ds_store"
+    ]
+    private static let skipExtensions: Set<String> = [
+        "txt", "htm", "html", "xml", "pdf", "exe", "dll", "ini", "inf", "ico",
+        "bmp", "gif", "png", "jpg", "jpeg", "js", "css", "json", "ds_store",
+        "plist", "sh", "bat", "cmd", "cab", "msi", "app", "chm", "log", "sys"
+    ]
+
+    private static func shouldSkipFile(name: String) -> Bool {
+        let lower = name.lowercased()
+        if lower.hasPrefix(".") || skipNames.contains(lower) { return true }
+        let ext = (lower as NSString).pathExtension
+        if !ext.isEmpty && skipExtensions.contains(ext) { return true }
+        return false
+    }
 
     @objc func pickFolder(_ call: CAPPluginCall) {
         pendingCall = call
@@ -39,6 +57,17 @@ public class FolderPickerPlugin: CAPPlugin, CAPBridgedPlugin, UIDocumentPickerDe
         }
     }
 
+    @objc func deletePaths(_ call: CAPPluginCall) {
+        let paths = call.getArray("paths", String.self) ?? []
+        DispatchQueue.global(qos: .utility).async {
+            let fm = FileManager.default
+            for p in paths {
+                try? fm.removeItem(atPath: p)
+            }
+            call.resolve()
+        }
+    }
+
     @objc func downloadUrl(_ call: CAPPluginCall) {
         guard let urlStr = call.getString("url"), let url = URL(string: urlStr) else {
             call.reject("Invalid URL")
@@ -47,8 +76,8 @@ public class FolderPickerPlugin: CAPPlugin, CAPBridgedPlugin, UIDocumentPickerDe
         let suggestedName = call.getString("filename") ?? ""
         DispatchQueue.global(qos: .userInitiated).async {
             do {
-                let fileInfo = try self.fetchRemoteFile(url: url, suggestedName: suggestedName)
-                call.resolve(["files": [fileInfo]])
+                let (fileInfo, batchDir) = try self.fetchRemoteFile(url: url, suggestedName: suggestedName)
+                call.resolve(["files": [fileInfo], "batchDir": batchDir])
             } catch {
                 call.reject("Could not download from link: \(error.localizedDescription)")
             }
@@ -69,55 +98,100 @@ public class FolderPickerPlugin: CAPPlugin, CAPBridgedPlugin, UIDocumentPickerDe
         }
         DispatchQueue.global(qos: .userInitiated).async {
             do {
-                let files = try self.copyPickedItems(urls)
-                call.resolve(["files": files, "folder": urls.first?.lastPathComponent ?? "import"])
+                let (files, batchDir) = try self.copyPickedItems(urls)
+                call.resolve([
+                    "files": files,
+                    "folder": urls.first?.lastPathComponent ?? "import",
+                    "batchDir": batchDir
+                ])
             } catch {
                 call.reject("Could not read the selected items: \(error.localizedDescription)")
             }
         }
     }
 
-    private func freshImportDir() throws -> URL {
+    private func makeBatchDir() throws -> URL {
         let fm = FileManager.default
-        let base = fm.temporaryDirectory.appendingPathComponent("folder-import", isDirectory: true)
-        try? fm.removeItem(at: base)
+        let appSupport = try fm.url(for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: true)
+        let base = appSupport.appendingPathComponent("studies", isDirectory: true)
         let dest = base.appendingPathComponent(UUID().uuidString, isDirectory: true)
         try fm.createDirectory(at: dest, withIntermediateDirectories: true)
+        var rv = URLResourceValues()
+        rv.isExcludedFromBackup = true
+        var mutableBase = base
+        try? mutableBase.setResourceValues(rv)
         return dest
     }
 
-    private func copyPickedItems(_ urls: [URL]) throws -> [[String: Any]] {
+    private func copyPickedItems(_ urls: [URL]) throws -> ([[String: Any]], String) {
         let fm = FileManager.default
-        let dest = try freshImportDir()
+        let dest = try makeBatchDir()
         var out: [[String: Any]] = []
         var lastError: Error?
-        let keys: [URLResourceKey] = [.isRegularFileKey, .isDirectoryKey, .fileSizeKey]
+        let keys: [URLResourceKey] = [.isDirectoryKey, .fileSizeKey]
 
         for itemUrl in urls {
             let scoped = itemUrl.startAccessingSecurityScopedResource()
             defer { if scoped { itemUrl.stopAccessingSecurityScopedResource() } }
             var coordinationError: NSError?
-            NSFileCoordinator().coordinate(readingItemAt: itemUrl, options: [], error: &coordinationError) { url in
+            NSFileCoordinator().coordinate(readingItemAt: itemUrl, options: [.withoutChanges], error: &coordinationError) { url in
                 var isDir: ObjCBool = false
                 if fm.fileExists(atPath: url.path, isDirectory: &isDir), isDir.boolValue {
-                    let root = url.standardizedFileURL.resolvingSymlinksInPath().pathComponents
+                    let basePath = url.standardizedFileURL.path
+                    let folderName = url.lastPathComponent.isEmpty ? "folder" : url.lastPathComponent
                     guard let items = fm.enumerator(at: url, includingPropertiesForKeys: keys, options: [.skipsHiddenFiles]) else { return }
+                    
+                    var candidates: [(file: URL, target: URL, relative: String, fileName: String)] = []
+                    var index = 0
                     for case let file as URL in items {
-                        guard let values = try? file.resourceValues(forKeys: Set(keys)), values.isRegularFile == true else { continue }
-                        let parts = file.standardizedFileURL.resolvingSymlinksInPath().pathComponents
-                        let relative = parts.dropFirst(root.count).joined(separator: "/")
-                        if relative.isEmpty { continue }
-                        let target = dest.appendingPathComponent(url.lastPathComponent).appendingPathComponent(relative)
+                        let fileName = file.lastPathComponent
+                        if fileName.isEmpty || Self.shouldSkipFile(name: fileName) { continue }
+                        var childIsDir: ObjCBool = false
+                        if fm.fileExists(atPath: file.path, isDirectory: &childIsDir), childIsDir.boolValue { continue }
+                        let fullPath = file.standardizedFileURL.path
+                        if fullPath.lowercased().contains("/__macosx/") { continue }
+                        var relative: String
+                        if fullPath.hasPrefix(basePath + "/") {
+                            relative = String(fullPath.dropFirst(basePath.count + 1))
+                        } else {
+                            index += 1
+                            relative = "\(index)_\(fileName)"
+                        }
+                        let target = dest.appendingPathComponent(folderName).appendingPathComponent(relative)
+                        candidates.append((file, target, folderName + "/" + relative, fileName))
+                    }
+
+                    let total = candidates.count
+                    self.notifyListeners("folderProgress", data: ["copied": 0, "total": total, "name": "Scanning folder..."])
+
+                    for (i, c) in candidates.enumerated() {
                         do {
-                            try fm.createDirectory(at: target.deletingLastPathComponent(), withIntermediateDirectories: true)
-                            try fm.copyItem(at: file, to: target)
-                            out.append(["path": target.path, "name": url.lastPathComponent + "/" + relative, "size": values.fileSize ?? 0])
+                            try fm.createDirectory(at: c.target.deletingLastPathComponent(), withIntermediateDirectories: true)
+                            if fm.fileExists(atPath: c.target.path) {
+                                try? fm.removeItem(at: c.target)
+                            }
+                            try fm.copyItem(at: c.file, to: c.target)
+                            let attr = try? fm.attributesOfItem(atPath: c.target.path)
+                            let size = (attr?[.size] as? NSNumber)?.intValue ?? 0
+                            if size >= 128 || c.fileName.lowercased().hasSuffix(".zip") {
+                                out.append(["path": c.target.path, "name": c.relative, "size": size])
+                            } else {
+                                try? fm.removeItem(at: c.target)
+                            }
                         } catch {
                             lastError = error
+                        }
+                        if (i + 1) % 5 == 0 || (i + 1) == total {
+                            self.notifyListeners("folderProgress", data: [
+                                "copied": i + 1,
+                                "total": total,
+                                "name": c.fileName
+                            ])
                         }
                     }
                 } else {
                     let name = url.lastPathComponent.isEmpty ? "scan.dcm" : url.lastPathComponent
+                    if Self.shouldSkipFile(name: name) { return }
                     var target = dest.appendingPathComponent(name)
                     if fm.fileExists(atPath: target.path) {
                         target = dest.appendingPathComponent(UUID().uuidString + "_" + name)
@@ -135,11 +209,12 @@ public class FolderPickerPlugin: CAPPlugin, CAPBridgedPlugin, UIDocumentPickerDe
             if let error = coordinationError { lastError = error }
         }
         if out.isEmpty, let error = lastError { throw error }
-        return out
+        return (out, dest.path)
     }
 
-    private func fetchRemoteFile(url: URL, suggestedName: String) throws -> [String: Any] {
-        let dest = try freshImportDir()
+
+    private func fetchRemoteFile(url: URL, suggestedName: String) throws -> ([String: Any], String) {
+        let dest = try makeBatchDir()
         let sem = DispatchSemaphore(value: 0)
         var downloadedUrl: URL?
         var responseObj: URLResponse?
@@ -176,7 +251,6 @@ public class FolderPickerPlugin: CAPPlugin, CAPBridgedPlugin, UIDocumentPickerDe
             throw NSError(domain: "FolderPicker", code: http.statusCode, userInfo: [NSLocalizedDescriptionKey: "HTTP \(http.statusCode) from server"])
         }
 
-        // Determine filename from Content-Disposition or URL
         var name = suggestedName
         if let http = responseObj as? HTTPURLResponse,
            let disp = http.value(forHTTPHeaderField: "Content-Disposition") {
@@ -195,7 +269,6 @@ public class FolderPickerPlugin: CAPPlugin, CAPBridgedPlugin, UIDocumentPickerDe
         }
         if name.isEmpty { name = "gdrive_scan" }
 
-        // Check if file starts with HTML (e.g. private Google Drive sign-in page)
         let fh = try FileHandle(forReadingFrom: localFile)
         let head = fh.readData(ofLength: 512)
         try? fh.close()
@@ -205,7 +278,6 @@ public class FolderPickerPlugin: CAPPlugin, CAPBridgedPlugin, UIDocumentPickerDe
                 NSLocalizedDescriptionKey: "Google Drive returned a web page instead of a file. Make sure the file's sharing is set to 'Anyone with the link', or use 'Browse Google Drive' above."
             ])
         }
-        // If it starts with PK\x03\x04 and doesn't have .zip extension, add .zip so the reader unzips it
         if head.count >= 4 && head[0] == 0x50 && head[1] == 0x4b && head[2] == 0x03 && head[3] == 0x04 {
             if !name.lowercased().hasSuffix(".zip") {
                 name += ".zip"
@@ -217,6 +289,7 @@ public class FolderPickerPlugin: CAPPlugin, CAPBridgedPlugin, UIDocumentPickerDe
         try FileManager.default.moveItem(at: localFile, to: finalTarget)
         let attr = try? FileManager.default.attributesOfItem(atPath: finalTarget.path)
         let size = (attr?[.size] as? NSNumber)?.intValue ?? 0
-        return ["path": finalTarget.path, "name": name, "size": size]
+        return (["path": finalTarget.path, "name": name, "size": size], dest.path)
     }
 }
+

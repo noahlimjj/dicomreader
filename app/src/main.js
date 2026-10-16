@@ -10,8 +10,9 @@ import {attachGestures} from './view/gestures.js';
 import {minMaxWindow, percentileWindow, pixelValue, renderPixels, defaultWindow} from './view/render.js';
 import {MEASURE_TOOLS, newMeasurement, quantify, drawMeasurement, hitTest} from './view/measure.js';
 import {openMenu, closeMenu, isMenuOpen} from './ui/menu.js';
-import {initNative, shareBlob, isNative, platform, pickNativeFolder, pickNativeFiles, downloadNativeUrl} from './ui/native.js';
-
+import {initNative, shareBlob, isNative, platform, pickNativeFolder, pickNativeFiles, downloadNativeUrl, onNativeProgress} from './ui/native.js';
+import {listSavedStudies, saveStudyToLibrary, updateSavedStudyMeta, loadSavedStudy, deleteSavedStudy, studyIdOf} from './model/library.js';
+import {canReconstructMpr, buildMprSeries} from './model/mpr.js';
 
 const $ = (id) => document.getElementById(id);
 const BASE = import.meta.env.BASE_URL;
@@ -51,6 +52,7 @@ const state = {
   allLevels: loadPref('allLevels', false),
   smooth: loadPref('smooth', true),
   showInfo: loadPref('showInfo', true),
+  anonymize: loadPref('anonymize', false),
   locator: null, // {point, frame}
   measurements: [],
   selected: null, // measurement id
@@ -62,7 +64,10 @@ const state = {
   probe: null, // {view, text}
   sheet: null, // name of the open panel
   sourceCount: 0,
+  activeStudyId: null,
+  lastIndexedEntries: [],
 };
+
 
 const loader = new Loader({dictionaryUrl: `${BASE}dicom-dict.json`});
 
@@ -101,11 +106,13 @@ async function openEntries(entries, label = '') {
   setProgress(`Reading ${entries.length} file${entries.length === 1 ? '' : 's'}…`, 0);
   let done = 0;
   const items = [];
+  const indexed = [];
   let lastPaint = 0;
   let failed = 0;
   await Promise.all(entries.map((entry) => loader.index(entry).then((meta) => {
     if (meta) {
       entry.frames = meta.file.frames;
+      indexed.push({entry, meta});
       items.push(...makeItems(entry, meta));
     }
   }, () => {
@@ -125,7 +132,81 @@ async function openEntries(entries, label = '') {
     return;
   }
   state.sourceCount = entries.length;
-  setStudy(groupSeries(items), label);
+  state.lastIndexedEntries = indexed;
+  const series = groupSeries(items);
+  setStudy(series, label);
+  if (label !== 'sample') {
+    saveStudyToLibrary(series, indexed, state.measurements).then((id) => {
+      state.activeStudyId = id;
+    }).catch((e) => console.warn('Could not save to library', e));
+  }
+}
+
+async function openSavedStudy(id) {
+  try {
+    showEmpty(true);
+    setProgress('Opening saved study…', 0.5);
+    const doc = await loadSavedStudy(id);
+    setProgress(null);
+    state.activeStudyId = doc.id;
+    state.measurements = doc.measurements || [];
+    state.sourceCount = doc.sourceCount || 0;
+    setStudy(doc.series);
+    toast(`Opened saved study: ${doc.series[0]?.first?.patientName || 'Patient'}`);
+  } catch (e) {
+    setProgress(null);
+    toast(`Could not open saved study: ${e.message || e}`);
+    renderSavedStudies();
+  }
+}
+
+async function renderSavedStudies() {
+  const box = $('savedStudies');
+  const list = $('savedList');
+  if (!box || !list) return;
+  const studies = await listSavedStudies();
+  if (!studies.length) {
+    box.hidden = true;
+    list.innerHTML = '';
+    return;
+  }
+  box.hidden = false;
+  $('savedCount').textContent = String(studies.length);
+  list.innerHTML = studies.map((s) => {
+    const name = state.anonymize ? 'ANONYMOUS' : escapeHtml(s.patientName || 'Unnamed patient');
+    const mods = (s.modalities || []).map((m) => `<span class="badge">${escapeHtml(m)}</span>`).join('');
+    const date = formatDate(s.studyDate);
+    const sub = [date, `${s.seriesCount} series`, `${s.imageCount} images`].filter(Boolean).join(' · ');
+    const thumb = s.thumb ? `<img class="saved-thumb" src="${s.thumb}" alt="">` : `<div class="saved-thumb">${escapeHtml(s.modalities?.[0] || 'DCM')}</div>`;
+    return `
+      <div class="saved-card" data-id="${escapeHtml(s.id)}">
+        ${thumb}
+        <div class="saved-meta">
+          <div class="saved-title">${mods} ${name}</div>
+          <div class="saved-sub">${escapeHtml(sub)}</div>
+        </div>
+        <button class="saved-del" title="Delete from saved studies" aria-label="Delete" data-del="${escapeHtml(s.id)}">
+          <svg><use href="#i-trash"/></svg>
+        </button>
+      </div>`;
+  }).join('');
+
+  for (const card of list.querySelectorAll('.saved-card')) {
+    card.addEventListener('click', (e) => {
+      if (e.target.closest('.saved-del')) return;
+      openSavedStudy(card.dataset.id);
+    });
+  }
+  for (const btn of list.querySelectorAll('.saved-del')) {
+    btn.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      const id = btn.dataset.del;
+      await deleteSavedStudy(id);
+      if (state.activeStudyId === id) state.activeStudyId = null;
+      renderSavedStudies();
+      toast('Study deleted from library.');
+    });
+  }
 }
 
 async function openFiles(files) {
@@ -154,7 +235,6 @@ async function openSample() {
 function setStudy(series, label) {
   for (const v of vps) v.clear();
   state.series = series;
-  state.measurements = [];
   state.history = [];
   state.future = [];
   state.selected = null;
@@ -178,6 +258,7 @@ function closeStudy() {
   loader.clear();
   state.series = [];
   state.measurements = [];
+  state.activeStudyId = null;
   setLayout(1);
   renderSeriesList();
   showEmpty(true);
@@ -187,8 +268,12 @@ function closeStudy() {
 function showEmpty(on) {
   $('empty').hidden = !on;
   document.body.classList.toggle('no-study', on);
-  if (on) setProgress(null);
+  if (on) {
+    setProgress(null);
+    renderSavedStudies();
+  }
 }
+
 
 // ---------------------------------------------------------------------------
 // series
@@ -221,9 +306,15 @@ function renderSeriesList() {
   const list = $('seriesList');
   list.innerHTML = '';
   const f0 = state.series[0]?.first;
-  $('patientBox').innerHTML = f0 ? `<b>${escapeHtml(f0.patientName || 'Unnamed patient')}</b>${escapeHtml([
-    f0.patientId && `ID ${f0.patientId}`, f0.birthDate && `born ${formatDate(f0.birthDate)}`, f0.sex,
-  ].filter(Boolean).join(' · '))}${f0.institution ? `<br>${escapeHtml(f0.institution)}` : ''}` : '';
+  const pName = state.anonymize ? 'ANONYMOUS' : (f0?.patientName || 'Unnamed patient');
+  const pId = state.anonymize ? 'ID [REDACTED]' : (f0?.patientId ? `ID ${f0.patientId}` : '');
+  const pBirth = state.anonymize ? '' : (f0?.birthDate ? `born ${formatDate(f0.birthDate)}` : '');
+  const pSex = state.anonymize ? '' : (f0?.sex || '');
+  const pInst = state.anonymize ? '' : (f0?.institution || '');
+  $('patientBox').innerHTML = f0 ? `<b>${escapeHtml(pName)}</b>${escapeHtml([
+    pId, pBirth, pSex,
+  ].filter(Boolean).join(' · '))}${pInst ? `<br>${escapeHtml(pInst)}` : ''}` : '';
+
   let lastStudy = null;
   state.series.forEach((s, i) => {
     const f = s.first;
@@ -400,7 +491,8 @@ function updateTitle() {
     return;
   }
   const f = s.first;
-  $('titleMain').textContent = f.patientName || s.title;
+  const patientDisplay = state.anonymize ? 'ANONYMOUS' : (f.patientName || s.title);
+  $('titleMain').textContent = patientDisplay;
   $('titleSub').textContent = [f.patientName ? `${f.modality} · ${s.title}` : f.modality, formatDate(f.studyDate)].filter(Boolean).join(' · ');
 }
 
@@ -421,10 +513,13 @@ function updateCorners(v) {
   const f = s.first;
   const tl = [];
   if (v.index === 0) {
-    tl.push(state.layout === 1 && TOUCH ? '' : f.patientName);
-    tl.push([f.patientId && `ID ${f.patientId}`, f.sex, formatAge(f.age)].filter(Boolean).join(' '));
+    const patientName = state.anonymize ? 'ANONYMOUS' : f.patientName;
+    const idInfo = state.anonymize ? 'ID [REDACTED]' : [f.patientId && `ID ${f.patientId}`, f.sex, formatAge(f.age)].filter(Boolean).join(' ');
+    tl.push(state.layout === 1 && TOUCH ? '' : patientName);
+    tl.push(idInfo);
     tl.push(formatDate(f.studyDate || f.seriesDate));
   }
+
   const tr = [`${f.modality} ${s.title}`.slice(0, 48)];
   if (Number.isFinite(f.seriesNumber)) tr.push(`Series ${f.seriesNumber}`);
   if (v.count > 1) tr.push(`Image ${v.pos + 1} / ${v.count}`);
@@ -705,6 +800,9 @@ function afterMeasureChange() {
   updateSelectionBar();
   if (state.sheet === 'measure') renderMeasurePanel();
   updateToolbar();
+  if (state.activeStudyId) {
+    updateSavedStudyMeta(state.activeStudyId, {measurements: state.measurements});
+  }
 }
 
 function deleteMeasurement(id) {
@@ -1205,6 +1303,8 @@ function moreMenu(anchor) {
     {label: 'Measurements & calibration', icon: 'list', disabled: !loaded, key: 'L', action: () => openSheet('measure')},
     {label: 'DICOM tags', icon: 'tags', disabled: !loaded, key: 'T', action: () => openSheet('tags')},
     {label: 'Save / share this view', icon: 'share', disabled: !loaded, key: 'X', action: exportView},
+    {label: 'Anonymize patient info', icon: 'shield', on: state.anonymize, key: 'H', action: toggleAnonymize},
+    ...(canReconstructMpr(v.series) ? [{label: 'Reconstruct MPR (Coronal & Sagittal)', icon: 'layout', action: () => runMpr(v.series)}] : []),
     '-',
     {label: 'Open files or a ZIP', icon: 'open', action: pickFiles},
     {label: 'Choose from Google Drive', icon: 'drive', action: openGoogleDrive},
@@ -1214,14 +1314,44 @@ function moreMenu(anchor) {
   ]);
 }
 
-function openSourceMenu(anchor) {
+async function openSourceMenu(anchor) {
+  const saved = await listSavedStudies();
   openMenu(anchor, [
     {title: 'Open scans'},
     {label: 'Choose files or a ZIP', icon: 'open', action: pickFiles},
     {label: 'Choose from Google Drive', icon: 'drive', action: openGoogleDrive},
     ...(canPickFolder ? [{label: 'Open a folder', icon: 'open', action: pickFolder}] : []),
+    ...(saved.length ? ['-', {label: `Saved studies (${saved.length})`, icon: 'list', action: () => openSheet('saved')}] : []),
   ]);
 }
+
+function toggleAnonymize() {
+  state.anonymize = !state.anonymize;
+  savePref('anonymize', state.anonymize);
+  updateTitle();
+  renderSeriesList();
+  for (const v of vps) updateCorners(v);
+  renderSavedStudies();
+  toast(state.anonymize ? 'Anonymize ON: patient info hidden' : 'Anonymize OFF');
+}
+
+async function runMpr(sourceSeries) {
+  if (!sourceSeries || !canReconstructMpr(sourceSeries)) return;
+  try {
+    setProgress('Reconstructing Coronal & Sagittal views…', 0);
+    const mprSeries = await buildMprSeries(sourceSeries, loader, (msg, frac) => setProgress(msg, frac));
+    setProgress(null);
+    state.series.push(...mprSeries);
+    renderSeriesList();
+    toast('Coronal and Sagittal MPR reconstructed! Select them in the Series drawer or Two Views.');
+    setLayout(2);
+    showSeries(state.series.indexOf(mprSeries[0]), vps[1]);
+  } catch (e) {
+    setProgress(null);
+    toast(`Could not reconstruct MPR: ${e.message || e}`);
+  }
+}
+
 
 function toggleInvert() {
   const v = activeVp();
@@ -1281,6 +1411,7 @@ function openSheet(name, toggle = false) {
     window: 'Brightness / contrast',
     drive: 'Google Drive',
     help: 'Help & about',
+    saved: 'Saved studies',
   };
   $('sheetTitle').textContent = titles[name];
   if (name === 'measure') renderMeasurePanel();
@@ -1289,6 +1420,7 @@ function openSheet(name, toggle = false) {
   if (name === 'window') renderWindowPanel();
   if (name === 'drive') renderDrivePanel();
   if (name === 'help') renderHelpPanel();
+  if (name === 'saved') renderSavedSheet();
   requestAnimationFrame(() => vps.forEach((v) => v.resize()));
 }
 
@@ -1688,6 +1820,7 @@ function renderHelpPanel() {
     ['1 – 9 · I · R · Space', 'Presets · invert · reset · play'],
     ['V · Y · K · Tab', 'Two views · sync · all levels · switch view'],
     ['L · T · C · X · F', 'Measurements · tags · sliders · save image · series list'],
+    ['H', 'Anonymize patient info'],
     ['Ctrl+Z · Ctrl+Shift+Z · Delete', 'Undo · redo · delete selected measurement'],
   ];
   const rows = (TOUCH ? touchRows : [...touchRows.slice(0, 1), ...deskRows]);
@@ -1711,6 +1844,58 @@ function renderHelpPanel() {
     <p class="note">Built with dicom-parser, OpenJPEG, CharLS, libjpeg-turbo, OpenJPH, jpeg-lossless-decoder-js, pdf.js (JPEG),
       pako, zip.js and Capacitor. <a href="${BASE}licenses.txt" target="_blank" rel="noopener" style="color:var(--accent-2)">Licences</a></p>
     <p class="muted" style="font-size:12px">Version ${import.meta.env.VITE_APP_VERSION || 'dev'} · ${platform}</p>`;
+}
+
+async function renderSavedSheet() {
+  if (state.sheet !== 'saved') return;
+  const body = $('sheetBody');
+  const studies = await listSavedStudies();
+  if (!studies.length) {
+    body.innerHTML = '<p class="muted">No saved studies in your library yet. Any scan you open is automatically saved for instant access.</p>';
+    return;
+  }
+  body.innerHTML = `
+    <p class="note">These studies are stored in your device's library. Tap a study to open it instantly without re-reading or copying files.</p>
+    <div id="sheetSavedList" class="saved-list">
+      ${studies.map((s) => {
+        const name = state.anonymize ? 'ANONYMOUS' : escapeHtml(s.patientName || 'Unnamed patient');
+        const mods = (s.modalities || []).map((m) => `<span class="badge">${escapeHtml(m)}</span>`).join('');
+        const date = formatDate(s.studyDate);
+        const sub = [date, `${s.seriesCount} series`, `${s.imageCount} images`].filter(Boolean).join(' · ');
+        const thumb = s.thumb ? `<img class="saved-thumb" src="${s.thumb}" alt="">` : `<div class="saved-thumb">${escapeHtml(s.modalities?.[0] || 'DCM')}</div>`;
+        return `
+          <div class="saved-card" data-id="${escapeHtml(s.id)}">
+            ${thumb}
+            <div class="saved-meta">
+              <div class="saved-title">${mods} ${name}</div>
+              <div class="saved-sub">${escapeHtml(sub)}</div>
+            </div>
+            <button class="saved-del" title="Delete from saved studies" aria-label="Delete" data-del="${escapeHtml(s.id)}">
+              <svg><use href="#i-trash"/></svg>
+            </button>
+          </div>`;
+      }).join('')}
+    </div>`;
+
+  const list = body.querySelector('#sheetSavedList');
+  for (const card of list.querySelectorAll('.saved-card')) {
+    card.addEventListener('click', (e) => {
+      if (e.target.closest('.saved-del')) return;
+      closeSheet();
+      openSavedStudy(card.dataset.id);
+    });
+  }
+  for (const btn of list.querySelectorAll('.saved-del')) {
+    btn.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      const id = btn.dataset.del;
+      await deleteSavedStudy(id);
+      if (state.activeStudyId === id) state.activeStudyId = null;
+      renderSavedSheet();
+      renderSavedStudies();
+      toast('Study deleted from library.');
+    });
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -1819,7 +2004,7 @@ async function pickFiles() {
   }
 }
 
-const canPickFolder = isNative || (!TOUCH && 'webkitdirectory' in document.createElement('input'));
+const canPickFolder = isNative || 'webkitdirectory' in document.createElement('input');
 
 async function pickFolder() {
   if (!isNative) {
@@ -1923,6 +2108,7 @@ function onKey(e) {
   case 'v': setLayout(state.layout === 2 ? 1 : 2); return;
   case 'y': toggleSync(); return;
   case 'k': toggleLevels(); return;
+  case 'h': toggleAnonymize(); return;
   default: break;
   }
   if (/^[1-9]$/.test(e.key) && v.item && v.shown?.image?.kind === 'mono') {
@@ -1987,6 +2173,12 @@ bindUi();
 vps.forEach(bindViewport);
 updateAll();
 initNative((files) => openFiles(files), onBack);
+onNativeProgress((p) => {
+  if (p && p.total > 0) {
+    const pct = Math.round((p.copied / p.total) * 100);
+    setProgress(`Copying files… ${p.copied} / ${p.total} (${pct}%)`, p.copied / p.total);
+  }
+});
 $('openFolderBig').hidden = !canPickFolder;
 
 // handy for debugging and for the end-to-end tests

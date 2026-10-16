@@ -27,7 +27,10 @@ import java.net.URL;
 import java.net.URLDecoder;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 import java.util.UUID;
 
 /**
@@ -36,6 +39,28 @@ import java.util.UUID;
  */
 @CapacitorPlugin(name = "FolderPicker")
 public class FolderPickerPlugin extends Plugin {
+
+    private static final Set<String> SKIP_NAMES = new HashSet<>(Arrays.asList(
+        "dicomdir", "dirfile", "lockfile", "version", "autorun.inf", "thumbs.db", ".ds_store"
+    ));
+
+    private static final Set<String> SKIP_EXTS = new HashSet<>(Arrays.asList(
+        "txt", "htm", "html", "xml", "pdf", "exe", "dll", "ini", "inf", "ico",
+        "bmp", "gif", "png", "jpg", "jpeg", "js", "css", "json", "ds_store",
+        "plist", "sh", "bat", "cmd", "cab", "msi", "app", "chm", "log", "sys"
+    ));
+
+    private static boolean shouldSkipFile(String name) {
+        if (name == null || name.isEmpty()) return true;
+        String lower = name.toLowerCase();
+        if (lower.startsWith(".") || SKIP_NAMES.contains(lower)) return true;
+        int dot = lower.lastIndexOf('.');
+        if (dot > 0 && dot < lower.length() - 1) {
+            String ext = lower.substring(dot + 1);
+            if (SKIP_EXTS.contains(ext)) return true;
+        }
+        return false;
+    }
 
     @PluginMethod
     public void pickFolder(PluginCall call) {
@@ -60,6 +85,20 @@ public class FolderPickerPlugin extends Plugin {
     }
 
     @PluginMethod
+    public void deletePaths(PluginCall call) {
+        JSArray arr = call.getArray("paths");
+        new Thread(() -> {
+            if (arr != null) {
+                for (int i = 0; i < arr.length(); i++) {
+                    String p = arr.optString(i, "");
+                    if (!p.isEmpty()) deleteRecursive(new File(p));
+                }
+            }
+            call.resolve();
+        }).start();
+    }
+
+    @PluginMethod
     public void downloadUrl(PluginCall call) {
         String urlStr = call.getString("url");
         String suggestedName = call.getString("filename", "");
@@ -69,7 +108,7 @@ public class FolderPickerPlugin extends Plugin {
         }
         new Thread(() -> {
             try {
-                File dest = freshImportDir();
+                File dest = makeBatchDir();
                 HttpURLConnection conn = (HttpURLConnection) new URL(urlStr).openConnection();
                 conn.setInstanceFollowRedirects(true);
                 conn.setConnectTimeout(30000);
@@ -131,6 +170,7 @@ public class FolderPickerPlugin extends Plugin {
                 files.put(f);
                 JSObject r = new JSObject();
                 r.put("files", files);
+                r.put("batchDir", dest.getAbsolutePath());
                 call.resolve(r);
             } catch (Exception e) {
                 call.reject("Could not download from link: " + e.getMessage(), e);
@@ -168,7 +208,7 @@ public class FolderPickerPlugin extends Plugin {
         }
         new Thread(() -> {
             try {
-                File dest = freshImportDir();
+                File dest = makeBatchDir();
                 ContentResolver resolver = getContext().getContentResolver();
                 JSArray files = new JSArray();
                 for (int i = 0; i < uris.size(); i++) {
@@ -182,6 +222,7 @@ public class FolderPickerPlugin extends Plugin {
                             if (!c.isNull(1)) size = c.getLong(1);
                         }
                     } catch (Exception ignored) {}
+                    if (shouldSkipFile(name)) continue;
                     File target = new File(dest, name);
                     if (target.exists()) target = new File(dest, (i + 1) + "_" + name);
                     try (InputStream in = resolver.openInputStream(u); OutputStream os = new FileOutputStream(target)) {
@@ -190,7 +231,8 @@ public class FolderPickerPlugin extends Plugin {
                         int n;
                         while ((n = in.read(buf)) > 0) os.write(buf, 0, n);
                     }
-                    if (size <= 0) size = target.length();
+                    long actualSize = target.length();
+                    if (actualSize > 0) size = actualSize;
                     JSObject f = new JSObject();
                     f.put("path", target.getAbsolutePath());
                     f.put("name", name);
@@ -199,6 +241,7 @@ public class FolderPickerPlugin extends Plugin {
                 }
                 JSObject r = new JSObject();
                 r.put("files", files);
+                r.put("batchDir", dest.getAbsolutePath());
                 call.resolve(r);
             } catch (Exception e) {
                 call.reject("Could not read selected files: " + e.getMessage(), e);
@@ -220,7 +263,7 @@ public class FolderPickerPlugin extends Plugin {
         Uri tree = data.getData();
         new Thread(() -> {
             try {
-                File dest = freshImportDir();
+                File dest = makeBatchDir();
                 String rootId = DocumentsContract.getTreeDocumentId(tree);
                 String folderName = rootId;
                 int colon = folderName.lastIndexOf(':');
@@ -228,11 +271,12 @@ public class FolderPickerPlugin extends Plugin {
                 int slash = folderName.lastIndexOf('/');
                 if (slash >= 0) folderName = folderName.substring(slash + 1);
                 if (folderName.isEmpty()) folderName = "folder";
-                JSArray files = new JSArray();
-                copyChildren(tree, rootId, "", dest, files, folderName);
+                int[] counter = new int[]{0};
+                copyChildren(tree, rootId, "", dest, files, folderName, counter);
                 JSObject r = new JSObject();
                 r.put("files", files);
                 r.put("folder", folderName);
+                r.put("batchDir", dest.getAbsolutePath());
                 call.resolve(r);
             } catch (Exception e) {
                 call.reject("Could not read the folder: " + e.getMessage(), e);
@@ -240,15 +284,14 @@ public class FolderPickerPlugin extends Plugin {
         }).start();
     }
 
-    private File freshImportDir() throws Exception {
-        File base = new File(getContext().getCacheDir(), "folder-import");
-        deleteRecursive(base);
+    private File makeBatchDir() throws Exception {
+        File base = new File(getContext().getFilesDir(), "studies");
         File dest = new File(base, UUID.randomUUID().toString());
-        if (!dest.mkdirs()) throw new Exception("cannot create " + dest);
+        if (!dest.mkdirs() && !dest.exists()) throw new Exception("cannot create " + dest);
         return dest;
     }
 
-    private void copyChildren(Uri tree, String parentId, String relative, File dest, JSArray out, String folderName) throws Exception {
+    private void copyChildren(Uri tree, String parentId, String relative, File dest, JSArray out, String folderName, int[] counter) throws Exception {
         ContentResolver resolver = getContext().getContentResolver();
         Uri children = DocumentsContract.buildChildDocumentsUriUsingTree(tree, parentId);
         String[] columns = {
@@ -264,12 +307,14 @@ public class FolderPickerPlugin extends Plugin {
                 String name = c.getString(1);
                 String mime = c.getString(2);
                 long size = c.isNull(3) ? 0 : c.getLong(3);
-                if (name == null || name.startsWith(".")) continue;
+                if (name == null || name.startsWith(".") || "__macosx".equalsIgnoreCase(name)) continue;
                 String rel = relative.isEmpty() ? name : relative + "/" + name;
                 if (DocumentsContract.Document.MIME_TYPE_DIR.equals(mime)) {
-                    copyChildren(tree, id, rel, dest, out, folderName);
+                    copyChildren(tree, id, rel, dest, out, folderName, counter);
                     continue;
                 }
+                if (shouldSkipFile(name)) continue;
+                if (size > 0 && size < 128 && !name.toLowerCase().endsWith(".zip")) continue;
                 File target = new File(dest, rel);
                 File parent = target.getParentFile();
                 if (parent != null && !parent.exists()) parent.mkdirs();
@@ -280,14 +325,28 @@ public class FolderPickerPlugin extends Plugin {
                     int n;
                     while ((n = in.read(buf)) > 0) os.write(buf, 0, n);
                 }
+                long actualSize = target.length();
+                if (actualSize > 0) size = actualSize;
+                if (size < 128 && !name.toLowerCase().endsWith(".zip")) {
+                    target.delete();
+                    continue;
+                }
                 JSObject f = new JSObject();
                 f.put("path", target.getAbsolutePath());
                 f.put("name", folderName + "/" + rel);
                 f.put("size", size);
                 out.put(f);
+                counter[0]++;
+                if (counter[0] % 5 == 0) {
+                    JSObject progress = new JSObject();
+                    progress.put("copied", counter[0]);
+                    progress.put("name", name);
+                    notifyListeners("folderProgress", progress);
+                }
             }
         }
     }
+
 
     private static void deleteRecursive(File f) {
         if (!f.exists()) return;
@@ -296,3 +355,4 @@ public class FolderPickerPlugin extends Plugin {
         f.delete();
     }
 }
+

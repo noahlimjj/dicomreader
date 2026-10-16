@@ -50,6 +50,7 @@ export class Loader {
   }
 
   peek(item) {
+    if (item.mprImage) return item.mprImage;
     const hit = this.cache.get(item.id);
     if (!hit) return undefined;
     this.cache.delete(item.id);
@@ -59,8 +60,10 @@ export class Loader {
 
   /** Decoded frame of item ({id, entry, frame}), from the cache if possible. */
   image(item, priority = 10) {
+    if (item.mprImage) return Promise.resolve(item.mprImage);
     const cached = this.peek(item);
     if (cached) return Promise.resolve(cached);
+
     const existing = [...this.pending.values()].find((t) => t.op === 'decode' && t.item.id === item.id) ||
       this.queue.find((t) => t.op === 'decode' && t.item.id === item.id);
     if (existing) {

@@ -397,3 +397,92 @@ input[type="range"] { width: 100%; accent-color: var(--accent-2); height: 32px; 
 .vp.compact .corners .tl, .vp.compact .corners .br { display: none; }
 .vp.compact .corners .c { font-size: 10.5px; }
 .vp.compact .orient { font-size: 11px; }
+
+/* ---- in-app saved studies library ("patient folders") ---- */
+.saved-studies {
+  width: min(100%, 460px);
+  margin-top: 22px;
+  text-align: left;
+}
+.saved-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 4px 8px;
+  font-size: 14px;
+  border-bottom: 1px solid var(--line);
+}
+.saved-list {
+  display: grid;
+  gap: 8px;
+  margin-top: 10px;
+  max-height: 280px;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+.saved-card {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 10px;
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  cursor: pointer;
+  transition: border-color 0.15s, background-color 0.15s;
+}
+.saved-card:hover {
+  border-color: var(--accent);
+  background: #202732;
+}
+.saved-thumb {
+  width: 54px;
+  height: 54px;
+  border-radius: 8px;
+  background: #000;
+  object-fit: contain;
+  flex: none;
+  display: grid;
+  place-items: center;
+  color: var(--muted);
+  font-size: 12px;
+}
+.saved-meta {
+  flex: 1;
+  min-width: 0;
+}
+.saved-title {
+  font-weight: 600;
+  font-size: 14px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.saved-sub {
+  font-size: 12px;
+  color: var(--muted);
+  margin-top: 2px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.saved-del {
+  width: 32px;
+  height: 32px;
+  display: grid;
+  place-items: center;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  border-radius: 8px;
+  flex: none;
+}
+.saved-del:hover {
+  color: var(--danger);
+  background: rgba(255, 107, 107, 0.15);
+}
+.saved-del svg {
+  width: 18px;
+  height: 18px;
+}
+

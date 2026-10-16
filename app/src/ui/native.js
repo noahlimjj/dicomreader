@@ -76,8 +76,10 @@ export async function initNative(onFiles, onBack) {
 /**
  * Convert native-copied file records `{name, path, size}` into loader entries,
  * automatically unpacking any `.zip` archives via `entriesFromFiles`.
+ * Non-ZIP entries are marked `cheap: true` so the worker pool indexes 32 headers
+ * at a time by streaming only the first 48 KB per file.
  */
-async function nativeFilesToEntries(files, onStatus = () => {}) {
+export async function nativeFilesToEntries(files, onStatus = () => {}, batchDir = null) {
   const entries = [];
   const zipFiles = [];
   for (const f of files) {
@@ -87,36 +89,42 @@ async function nativeFilesToEntries(files, onStatus = () => {}) {
       const blob = await r.blob();
       const file = new File([blob], f.name, {type: 'application/zip'});
       file.relativePath = f.name;
+      file.nativePath = f.path;
       zipFiles.push(file);
-    } else if (maybeDicom(f.name, f.size)) {
+    } else if (maybeDicom(f.name, f.size || 512)) {
+      const url = Capacitor.convertFileSrc(`file://${f.path}`);
+      const size = f.size || 0;
       entries.push({
-        key: `${f.path}|${f.size}`,
+        key: `${f.path}|${size}`,
         name: f.name,
-        size: f.size,
-        getSource: async () => {
-          const r = await fetch(Capacitor.convertFileSrc(`file://${f.path}`));
-          if (!r.ok) throw new Error(`Cannot read ${f.name}`);
-          return r.arrayBuffer();
-        },
+        size,
+        nativePath: f.path,
+        batchDir,
+        cheap: true,
+        getSource: () => Promise.resolve({url, size}),
       });
     }
   }
   if (zipFiles.length) {
-    entries.push(...await entriesFromFiles(zipFiles, onStatus));
+    const unzipped = await entriesFromFiles(zipFiles, onStatus);
+    for (const u of unzipped) {
+      u.batchDir = batchDir;
+    }
+    entries.push(...unzipped);
   }
   return entries;
 }
 
 /**
  * Native folder picker (iOS Files / Android): the folder is copied into the
- * app's temporary folder. Returns import entries, or null when cancelled.
+ * app's persistent studies folder. Returns import entries, or null when cancelled.
  */
 export async function pickNativeFolder(onStatus) {
   const {registerPlugin} = await import('@capacitor/core');
   const FolderPicker = registerPlugin('FolderPicker');
   const res = await FolderPicker.pickFolder();
   if (!res || res.cancelled || !res.files) return null;
-  return nativeFilesToEntries(res.files, onStatus);
+  return nativeFilesToEntries(res.files, onStatus, res.batchDir || null);
 }
 
 /**
@@ -129,7 +137,7 @@ export async function pickNativeFiles({drive = false} = {}, onStatus) {
   const FolderPicker = registerPlugin('FolderPicker');
   const res = await FolderPicker.pickFiles({drive});
   if (!res || res.cancelled || !res.files) return null;
-  return nativeFilesToEntries(res.files, onStatus);
+  return nativeFilesToEntries(res.files, onStatus, res.batchDir || null);
 }
 
 /**
@@ -141,6 +149,32 @@ export async function downloadNativeUrl(url, filename = 'google-drive-scan', onS
   const FolderPicker = registerPlugin('FolderPicker');
   const res = await FolderPicker.downloadUrl({url, filename});
   if (!res || !res.files) return [];
-  return nativeFilesToEntries(res.files, onStatus);
+  return nativeFilesToEntries(res.files, onStatus, res.batchDir || null);
 }
+
+/** Delete native study directories when a saved study is removed from the library. */
+export async function deleteNativePaths(paths) {
+  if (!isNative || !paths?.length) return;
+  try {
+    const {registerPlugin} = await import('@capacitor/core');
+    const FolderPicker = registerPlugin('FolderPicker');
+    await FolderPicker.deletePaths({paths});
+  } catch (e) {
+    console.warn('Could not delete native paths', e);
+  }
+}
+
+/** Listen for live folder copy progress events from native iOS and Android plugins. */
+export async function onNativeProgress(callback) {
+  if (!isNative) return {remove: () => {}};
+  try {
+    const {registerPlugin} = await import('@capacitor/core');
+    const FolderPicker = registerPlugin('FolderPicker');
+    return await FolderPicker.addListener('folderProgress', callback);
+  } catch {
+    return {remove: () => {}};
+  }
+}
+
+
 

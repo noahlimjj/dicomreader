@@ -31,6 +31,37 @@ function remember(key, ds, meta) {
 async function bytesOf(source, limit) {
   if (source instanceof ArrayBuffer) return new Uint8Array(source);
   if (ArrayBuffer.isView(source)) return new Uint8Array(source.buffer, source.byteOffset, source.byteLength);
+  if (source && typeof source.url === 'string') {
+    const headers = limit && (!source.size || source.size > limit) ? {Range: `bytes=0-${limit - 1}`} : undefined;
+    const r = await fetch(source.url, headers ? {headers} : undefined);
+    if (!r.ok) throw new Error(`Cannot read ${source.url} (${r.status})`);
+    if (limit && r.body?.getReader) {
+      const reader = r.body.getReader();
+      const chunks = [];
+      let total = 0;
+      try {
+        while (total < limit) {
+          const {done, value} = await reader.read();
+          if (done || !value) break;
+          chunks.push(value);
+          total += value.byteLength;
+        }
+      } finally {
+        try { await reader.cancel(); } catch { /* ignore */ }
+      }
+      const out = new Uint8Array(Math.min(total, limit));
+      let offset = 0;
+      for (const c of chunks) {
+        const take = Math.min(c.byteLength, out.byteLength - offset);
+        if (take <= 0) break;
+        out.set(c.subarray(0, take), offset);
+        offset += take;
+      }
+      return out;
+    }
+    const buf = await r.arrayBuffer();
+    return limit && buf.byteLength > limit ? new Uint8Array(buf, 0, limit) : new Uint8Array(buf);
+  }
   // File / Blob
   const blob = limit && source.size > limit ? source.slice(0, limit) : source;
   return new Uint8Array(await blob.arrayBuffer());
@@ -57,6 +88,7 @@ async function index(source) {
   const size = source.size ?? source.byteLength ?? 0;
   let bytes = await bytesOf(source, HEAD_BYTES);
   if (bytes.length < 132) return null;
+
   let ds;
   try {
     ds = parse(bytes, {untilPixelData: true});
