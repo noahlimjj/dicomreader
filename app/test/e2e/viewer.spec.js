@@ -182,8 +182,27 @@ test('Google Drive option is available in empty screen, Open menu and More menu'
   await expect(page.locator('#sheet')).toBeHidden();
 
   await page.click('#openBtn');
-  await expect(page.locator('#menu button', {hasText: 'Choose from Google Drive'})).toBeVisible();
   await page.locator('#menu button', {hasText: 'Choose from Google Drive'}).click();
   await expect(page.locator('#sheetTitle')).toHaveText('Google Drive');
+});
+
+test('scout localizer: single tap navigates volume', async ({page}, testInfo) => {
+  await openSample(page);
+  await menuItem(page, '#moreBtn', 'Two views');
+  await waitForImage(page, 1);
+  // Switch view 1 to Scout
+  await page.evaluate(() => {
+    const scoutIdx = window.dicomReader.state.series.findIndex(s => s.title.includes('Scout'));
+    window.dicomReader.showSeries(scoutIdx, window.dicomReader.vps[1]);
+  });
+  await waitForImage(page, 1);
+  const r1 = (await vpState(page, 1)).rect;
+  // Single tap near top of scout moves axial volume towards cranial slices (slice 0)
+  await tap(page, 1, [r1.width / 2, r1.height * 0.1], pointerFor(testInfo));
+  await expect.poll(async () => (await vpState(page, 0)).pos).toBeLessThan(20);
+
+  // Single tap near bottom of scout moves axial volume towards caudal slices (slice 75)
+  await tap(page, 1, [r1.width / 2, r1.height * 0.9], pointerFor(testInfo));
+  await expect.poll(async () => (await vpState(page, 0)).pos).toBeGreaterThan(50);
 });
 

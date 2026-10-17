@@ -55,17 +55,41 @@ export function makeItems(entry, meta) {
   return items;
 }
 
-function sortItems(list) {
-  // acquisition order: instance number, then frame; position along the normal
-  // when instance numbers are missing or equal
-  const n = list[0].hasGeometry ? cross(list[0].iop.slice(0, 3), list[0].iop.slice(3, 6)) : null;
-  const pos = (it) => (n && it.hasGeometry ? dot(it.ipp, n) : 0);
-  list.sort((a, b) =>
-    (a.instanceNumber || 0) - (b.instanceNumber || 0) ||
-    (a.frame - b.frame) ||
-    (pos(a) - pos(b)) ||
-    a.name.localeCompare(b.name));
+export function anatomicalNormal(it) {
+  if (!it || !it.hasGeometry) return null;
+  const n = cross(it.iop.slice(0, 3), it.iop.slice(3, 6));
+  const ax = Math.abs(n[0]);
+  const ay = Math.abs(n[1]);
+  const az = Math.abs(n[2]);
+  let s = 1;
+  if (az >= ax && az >= ay) {
+    // Axial: cranial to caudal (head to feet, +Z to -Z in DICOM LPS)
+    s = n[2] < 0 ? 1 : -1;
+  } else if (ay >= ax && ay >= az) {
+    // Coronal: anterior to posterior (-Y to +Y in DICOM LPS)
+    s = n[1] < 0 ? -1 : 1;
+  } else {
+    // Sagittal: right to left (-X to +X in DICOM LPS)
+    s = n[0] < 0 ? -1 : 1;
+  }
+  return [s * n[0], s * n[1], s * n[2]];
 }
+
+function sortItems(list) {
+  // Radiological standard: anatomical order for 3D volumes (cranial -> caudal,
+  // anterior -> posterior, right -> left); fall back to instance/frame for cine/time-series
+  const geomItem = list.find((it) => it.hasGeometry);
+  const n = geomItem ? anatomicalNormal(geomItem) : null;
+  const pos = (it) => (n && it.hasGeometry ? dot(it.ipp, n) : 0);
+  list.sort((a, b) => {
+    const dPos = pos(a) - pos(b);
+    if (Math.abs(dPos) > 1e-3) return dPos;
+    return (a.instanceNumber || 0) - (b.instanceNumber || 0) ||
+      (a.frame - b.frame) ||
+      a.name.localeCompare(b.name);
+  });
+}
+
 
 function makeSeries(list, extra = {}) {
   sortItems(list);

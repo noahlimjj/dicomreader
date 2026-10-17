@@ -30,7 +30,8 @@ export function planeOf(it) {
   };
 }
 
-export const sameSpace = (p, q) => !!(p && q && p.frame && p.frame === q.frame);
+export const sameSpace = (p, q) =>
+  !!(p && q && ((p.frame && p.frame === q.frame) || (!p.frame && !q.frame && p.it?.studyUid && p.it.studyUid === q.it?.studyUid)));
 
 /** pixel (x = column, y = row) -> patient point */
 export function pixelToPatient(p, x, y) {
@@ -84,7 +85,7 @@ export function intersection(p, q) {
 }
 
 /** index of the slice of a series closest to a point, or -1 */
-export function nearestSlice(series, point) {
+export function nearestSlice(series, point, {clamp = false} = {}) {
   let best = -1;
   let bestD = Infinity;
   series.items.forEach((it, i) => {
@@ -96,9 +97,11 @@ export function nearestSlice(series, point) {
       best = i;
     }
   });
+  if (clamp && best >= 0) return best;
   const thick = series.first.thickness || series.first.spacing || 5;
   return bestD <= Math.max(thick, 5) ? best : -1;
 }
+
 
 /** orientation letters for a patient space direction (LPS) */
 export function directionLetters(dir) {

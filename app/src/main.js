@@ -83,6 +83,7 @@ const vps = vpEls.map((el, index) => new Viewport(el, {
 const activeVp = () => vps[state.active];
 const shownVps = () => vps.slice(0, state.layout);
 const otherVp = (v) => (state.layout === 2 ? vps[1 - v.index] : null);
+const isScout = (v) => !!(v && (v.series?.isReference || v.count <= 2 || v.item?.imageType?.includes('LOCALIZER')));
 
 // ---------------------------------------------------------------------------
 // opening files
@@ -939,6 +940,15 @@ function makeDragHandler(v, x, y, e, button) {
   if (MEASURE_TOOLS[tool] && button === 0) return createMeasurement(v, tool, x, y, e);
   switch (tool) {
   case 'scroll': {
+    const w = otherVp(v);
+    if (isScout(v) && w && w.series && w.count > 1) {
+      locate(v, x, y, {clamp: true});
+      return {
+        move(mx, my) {
+          locate(v, mx, my, {clamp: true});
+        },
+      };
+    }
     let acc = 0;
     const per = Math.max(3, Math.min(16, (v.size.h / Math.max(1, v.count)) * 1.5));
     v.stop();
@@ -1156,10 +1166,10 @@ function onDoubleTap(v, x, y) {
   else v.zoomAt(2.5, x, y);
 }
 
-function locate(v, x, y) {
+function locate(v, x, y, {clamp = true} = {}) {
   const p = planeOf(v.item);
   if (!p) {
-    toast('This image has no position information.');
+    if (!clamp) toast('This image has no position information.');
     return;
   }
   const [ix, iy] = v.toImage(x, y);
@@ -1169,18 +1179,20 @@ function locate(v, x, y) {
   if (w && w.series) {
     const q = planeOf(w.item);
     if (sameSpace(p, q)) {
-      const idx = nearestSlice(w.series, point);
+      const idx = nearestSlice(w.series, point, {clamp});
       if (idx >= 0) {
-        syncing = true;
-        try {
-          w.setPos(idx);
-        } finally {
-          syncing = false;
+        if (w.pos !== idx) {
+          syncing = true;
+          try {
+            w.setPos(idx);
+          } finally {
+            syncing = false;
+          }
         }
-      } else {
+      } else if (!clamp) {
         toast('That point is outside the other series.');
       }
-    } else if (q) {
+    } else if (q && !clamp) {
       toast('The two series are not in the same patient coordinates.');
     }
   }
@@ -1210,7 +1222,13 @@ function onTap(v, x, y, e) {
     select(hit.m.id);
     return;
   }
-  if (state.selected) select(null);
+  if (state.selected) {
+    select(null);
+    return;
+  }
+  if (state.layout === 2 && !MEASURE_TOOLS[state.tool]) {
+    locate(v, x, y, {clamp: true});
+  }
 }
 
 function bindViewport(v) {
