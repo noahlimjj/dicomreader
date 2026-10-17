@@ -353,51 +353,64 @@ class AppStoreClient:
 
     def submit_for_review(self, app_id, version_id):
         print("\nStarting App Review Submission...")
-        # 1. Create reviewSubmission
-        payload = {
-            "data": {
-                "type": "reviewSubmissions",
-                "attributes": {
-                    "platform": "IOS"
-                },
-                "relationships": {
-                    "app": {
-                        "data": {
-                            "type": "apps",
-                            "id": app_id
-                        }
-                    }
-                }
-            }
-        }
-        sub_res = self.request("POST", "reviewSubmissions", data=payload)
-        sub_id = sub_res["data"]["id"]
-        print(f"Created review submission container: {sub_id}")
-
-        # 2. Add version item to submission
-        item_payload = {
-            "data": {
-                "type": "reviewSubmissionItems",
-                "relationships": {
-                    "reviewSubmission": {
-                        "data": {
-                            "type": "reviewSubmissions",
-                            "id": sub_id
-                        }
+        subs_data = self.request("GET", f"apps/{app_id}/reviewSubmissions", params={"filter[platform]": "IOS"})
+        active_sub = next((s for s in subs_data.get("data", []) if s["attributes"].get("state") in ["READY_FOR_REVIEW", "WAITING_FOR_REVIEW", "IN_REVIEW"]), None)
+        if active_sub:
+            sub_id = active_sub["id"]
+            state = active_sub["attributes"].get("state")
+            print(f"Found active review submission container: {sub_id} (state: {state})")
+            if state in ["WAITING_FOR_REVIEW", "IN_REVIEW"]:
+                print(f"App version is already submitted to Apple! Current state: {state}")
+                return active_sub
+        else:
+            payload = {
+                "data": {
+                    "type": "reviewSubmissions",
+                    "attributes": {
+                        "platform": "IOS"
                     },
-                    "appStoreVersion": {
-                        "data": {
-                            "type": "appStoreVersions",
-                            "id": version_id
+                    "relationships": {
+                        "app": {
+                            "data": {
+                                "type": "apps",
+                                "id": app_id
+                            }
                         }
                     }
                 }
             }
-        }
-        self.request("POST", "reviewSubmissionItems", data=item_payload)
-        print(f"Added App Store Version {version_id} to review submission.")
+            sub_res = self.request("POST", "reviewSubmissions", data=payload)
+            sub_id = sub_res["data"]["id"]
+            print(f"Created review submission container: {sub_id}")
 
-        # 3. Submit
+        items_data = self.request("GET", f"reviewSubmissions/{sub_id}/items")
+        has_version = any(
+            item.get("relationships", {}).get("appStoreVersion", {}).get("data", {}).get("id") == version_id
+            for item in items_data.get("data", [])
+        )
+        if not has_version:
+            item_payload = {
+                "data": {
+                    "type": "reviewSubmissionItems",
+                    "relationships": {
+                        "reviewSubmission": {
+                            "data": {
+                                "type": "reviewSubmissions",
+                                "id": sub_id
+                            }
+                        },
+                        "appStoreVersion": {
+                            "data": {
+                                "type": "appStoreVersions",
+                                "id": version_id
+                            }
+                        }
+                    }
+                }
+            }
+            self.request("POST", "reviewSubmissionItems", data=item_payload)
+            print(f"Added App Store Version {version_id} to review submission.")
+
         submit_payload = {
             "data": {
                 "type": "reviewSubmissions",

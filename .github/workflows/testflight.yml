@@ -11,6 +11,11 @@ name: iOS → TestFlight
 
 on:
   workflow_dispatch:
+    inputs:
+      submit_to_app_store:
+        description: 'Submit to App Store for review'
+        type: boolean
+        default: true
   push:
     tags: ['ios-v*']
 
@@ -131,3 +136,17 @@ jobs:
             -allowProvisioningUpdates -authenticationKeyPath "$KEY_PATH" \
             -authenticationKeyID "$K" -authenticationKeyIssuerID "$I" | tail -30
           echo "Uploaded. It shows up in App Store Connect → TestFlight after processing (10–30 min)."
+      - name: Configure App Store Metadata, Screenshots, and Submit
+        working-directory: .
+        env:
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          ASC_KEY_P8: ${{ secrets.ASC_KEY_P8 }}
+        run: |
+          pip3 install requests pyjwt cryptography
+          if [ "${{ github.event.inputs.submit_to_app_store }}" = "false" ]; then
+            python3 tools/appstore_client.py all
+          else
+            python3 tools/appstore_client.py submit
+          fi
+
