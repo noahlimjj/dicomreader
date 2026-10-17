@@ -1,0 +1,260 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+  <meta name="theme-color" content="#0b0d10">
+  <meta name="color-scheme" content="dark">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="description" content="View CT, MRI, X-ray and ultrasound images (DICOM) on your phone. Images stay on your device.">
+  <title>DICOM Mobile</title>
+  <link rel="icon" href="./icon.svg" type="image/svg+xml">
+  <link rel="manifest" href="./manifest.webmanifest">
+  <script type="module" crossorigin src="./assets/index-dODEAxR8.js"></script>
+  <link rel="stylesheet" crossorigin href="./assets/index-DMTBRh3w.css">
+</head>
+<body>
+  <svg width="0" height="0" style="position:absolute" aria-hidden="true">
+    <defs>
+      <symbol id="i-menu" viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h16"/></symbol>
+      <symbol id="i-open" viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><path d="M12 10v6M9 13h6"/></symbol>
+      <symbol id="i-more" viewBox="0 0 24 24"><circle cx="5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="19" cy="12" r="1.6"/></symbol>
+      <symbol id="i-scroll" viewBox="0 0 24 24"><path d="M12 3v18M8 7l4-4 4 4M8 17l4 4 4-4"/></symbol>
+      <symbol id="i-window" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M12 3.5a8.5 8.5 0 0 1 0 17z" fill="currentColor"/></symbol>
+      <symbol id="i-pan" viewBox="0 0 24 24"><path d="M12 2v20M2 12h20M12 2l-3 3M12 2l3 3M12 22l-3-3M12 22l3-3M2 12l3-3M2 12l3 3M22 12l-3-3M22 12l-3 3"/></symbol>
+      <symbol id="i-zoom" viewBox="0 0 24 24"><circle cx="10.5" cy="10.5" r="6.5"/><path d="M15.5 15.5L21 21M8 10.5h5M10.5 8v5"/></symbol>
+      <symbol id="i-ruler" viewBox="0 0 24 24"><path d="M4 20L20 4"/><path d="M2.5 18.5l3 3M18.5 2.5l3 3"/><path d="M9 15l1.5 1.5M12 12l1.5 1.5M15 9l1.5 1.5"/></symbol>
+      <symbol id="i-angle" viewBox="0 0 24 24"><path d="M20 19H4L15 5"/><path d="M9 19a5.5 5.5 0 0 0-2-4.2"/></symbol>
+      <symbol id="i-ellipse" viewBox="0 0 24 24"><ellipse cx="12" cy="12" rx="9" ry="6.5"/></symbol>
+      <symbol id="i-rect" viewBox="0 0 24 24"><rect x="3.5" y="6" width="17" height="12" rx="1"/></symbol>
+      <symbol id="i-arrow" viewBox="0 0 24 24"><path d="M20 20L5 5M5 5v7M5 5h7"/></symbol>
+      <symbol id="i-measure" viewBox="0 0 24 24"><path d="M3 17L17 3l4 4L7 21z"/><path d="M7 13l2 2M10 10l2 2M13 7l2 2"/></symbol>
+      <symbol id="i-presets" viewBox="0 0 24 24"><path d="M4 7h10M18 7h2M4 17h4M12 17h8"/><circle cx="16" cy="7" r="2"/><circle cx="10" cy="17" r="2"/></symbol>
+      <symbol id="i-invert" viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="16" rx="2"/><path d="M4 20L20 4v16z" fill="currentColor"/></symbol>
+      <symbol id="i-reset" viewBox="0 0 24 24"><path d="M4 12a8 8 0 1 0 2.5-5.8"/><path d="M4 4v4.5h4.5"/></symbol>
+      <symbol id="i-play" viewBox="0 0 24 24"><path d="M7 4.5v15l12-7.5z" fill="currentColor"/></symbol>
+      <symbol id="i-stop" viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" rx="1.5" fill="currentColor"/></symbol>
+      <symbol id="i-layout" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M12 4v16"/></symbol>
+      <symbol id="i-sync" viewBox="0 0 24 24"><path d="M9.5 14.5l5-5M8 11l-2 2a3.5 3.5 0 0 0 5 5l2-2M16 13l2-2a3.5 3.5 0 0 0-5-5l-2 2"/></symbol>
+      <symbol id="i-levels" viewBox="0 0 24 24"><path d="M3 6h18M3 10h18M3 14h18M3 18h18" stroke-dasharray="2 2"/></symbol>
+      <symbol id="i-rotate" viewBox="0 0 24 24"><path d="M20 12a8 8 0 1 1-2.5-5.8"/><path d="M20 4v4.5h-4.5"/><rect x="9" y="9" width="6" height="6"/></symbol>
+      <symbol id="i-flip" viewBox="0 0 24 24"><path d="M12 3v18" stroke-dasharray="2 2"/><path d="M9 6L3 18h6zM15 6l6 12h-6z"/></symbol>
+      <symbol id="i-smooth" viewBox="0 0 24 24"><rect x="4" y="4" width="7" height="7"/><rect x="13" y="13" width="7" height="7"/><path d="M13 4h7v7M4 13v7h7" stroke-dasharray="2 2"/></symbol>
+      <symbol id="i-list" viewBox="0 0 24 24"><path d="M9 6h11M9 12h11M9 18h11"/><path d="M4 6h1M4 12h1M4 18h1"/></symbol>
+      <symbol id="i-tags" viewBox="0 0 24 24"><path d="M4 4h16v16H4zM4 9h16M4 14h16M10 4v16"/></symbol>
+      <symbol id="i-share" viewBox="0 0 24 24"><path d="M12 3v12M8 7l4-4 4 4"/><path d="M5 12v7a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-7"/></symbol>
+      <symbol id="i-close" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></symbol>
+      <symbol id="i-help" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M9.5 9.5a2.5 2.5 0 1 1 3.5 2.3c-.7.3-1 .9-1 1.7v.5M12 17.5v.01"/></symbol>
+      <symbol id="i-info" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 11v6M12 7.5v.01"/></symbol>
+      <symbol id="i-undo" viewBox="0 0 24 24"><path d="M9 14L4 9l5-5"/><path d="M4 9h10a6 6 0 0 1 0 12h-3"/></symbol>
+      <symbol id="i-redo" viewBox="0 0 24 24"><path d="M15 14l5-5-5-5"/><path d="M20 9H10a6 6 0 0 0 0 12h3"/></symbol>
+      <symbol id="i-trash" viewBox="0 0 24 24"><path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13"/></symbol>
+      <symbol id="i-sliders" viewBox="0 0 24 24"><path d="M6 4v16M18 4v16M12 4v16"/><circle cx="6" cy="14" r="2" fill="currentColor"/><circle cx="12" cy="8" r="2" fill="currentColor"/><circle cx="18" cy="16" r="2" fill="currentColor"/></symbol>
+      <symbol id="i-probe" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 2v5M12 17v5M2 12h5M17 12h5"/></symbol>
+      <symbol id="i-drive" viewBox="0 0 24 24"><path d="M9 3h6l6 10.5-3 5.5H6L3 13.5z"/><path d="M9 3l6 10.5H3M15 3L6 19M21 13.5H9"/></symbol>
+      <symbol id="i-shield" viewBox="0 0 24 24"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></symbol>
+      <symbol id="i-home" viewBox="0 0 24 24"><path d="M3 10.5L12 3l9 7.5V20a1 1 0 0 1-1 1h-5v-6h-6v6H4a1 1 0 0 1-1-1z"/></symbol>
+      <radialGradient id="sym-ambient" cx="470" cy="512" r="450" gradientUnits="userSpaceOnUse">
+        <stop offset="0%" stop-color="#0ea5e9" stop-opacity="0.35"/>
+        <stop offset="45%" stop-color="#0284c7" stop-opacity="0.12"/>
+        <stop offset="100%" stop-color="#05080f" stop-opacity="0"/>
+      </radialGradient>
+      <linearGradient id="sym-gantry" x1="260" y1="200" x2="780" y2="824" gradientUnits="userSpaceOnUse">
+        <stop offset="0%" stop-color="#38bdf8"/>
+        <stop offset="50%" stop-color="#0284c7"/>
+        <stop offset="100%" stop-color="#2563eb"/>
+      </linearGradient>
+      <linearGradient id="sym-bone" x1="295" y1="250" x2="725" y2="760" gradientUnits="userSpaceOnUse">
+        <stop offset="0%" stop-color="#ffffff"/>
+        <stop offset="60%" stop-color="#e2e8f0"/>
+        <stop offset="100%" stop-color="#94a3b8"/>
+      </linearGradient>
+      <radialGradient id="sym-tissue" cx="470" cy="512" r="310" gradientUnits="userSpaceOnUse">
+        <stop offset="0%" stop-color="#38bdf8" stop-opacity="0.22"/>
+        <stop offset="65%" stop-color="#0e1a2f" stop-opacity="0.6"/>
+        <stop offset="100%" stop-color="#050912" stop-opacity="0.85"/>
+      </radialGradient>
+      <symbol id="i-logo" viewBox="0 0 1024 1024">
+        <circle cx="470" cy="512" r="450" fill="url(#sym-ambient)"/>
+        <circle cx="470" cy="512" r="390" fill="none" stroke="#1e293b" stroke-width="2.5" opacity="0.6"/>
+        <circle cx="470" cy="512" r="365" fill="none" stroke="#334155" stroke-width="2" stroke-dasharray="6 20" opacity="0.45"/>
+        <path d="M 265 202 L 470 202 A 310 310 0 0 1 470 822 L 265 822 Z" fill="url(#sym-tissue)" stroke="url(#sym-gantry)" stroke-width="15" stroke-linejoin="round"/>
+        <path d="M 298 258 L 470 258 A 254 254 0 0 1 470 766 L 298 766 Z" fill="#070c14" stroke="url(#sym-bone)" stroke-width="8.5" opacity="0.9" stroke-linejoin="round"/>
+        <path d="M 330 314 L 470 314 A 198 198 0 0 1 470 710 L 330 710 Z" fill="#0a1322" stroke="#38bdf8" stroke-width="3.5" opacity="0.75" stroke-linejoin="round"/>
+        <line x1="265" y1="145" x2="265" y2="879" stroke="#38bdf8" stroke-width="6" stroke-linecap="round"/>
+        <line x1="240" y1="265" x2="265" y2="265" stroke="#38bdf8" stroke-width="3.5" stroke-linecap="round" opacity="0.8"/>
+        <line x1="248" y1="345" x2="265" y2="345" stroke="#38bdf8" stroke-width="2.5" stroke-linecap="round" opacity="0.6"/>
+        <line x1="240" y1="425" x2="265" y2="425" stroke="#38bdf8" stroke-width="3.5" stroke-linecap="round" opacity="0.8"/>
+        <line x1="248" y1="599" x2="265" y2="599" stroke="#38bdf8" stroke-width="2.5" stroke-linecap="round" opacity="0.6"/>
+        <line x1="240" y1="679" x2="265" y2="679" stroke="#38bdf8" stroke-width="3.5" stroke-linecap="round" opacity="0.8"/>
+        <line x1="248" y1="759" x2="265" y2="759" stroke="#38bdf8" stroke-width="2.5" stroke-linecap="round" opacity="0.6"/>
+        <line x1="426" y1="512" x2="446" y2="512" stroke="#38bdf8" stroke-width="2.5" stroke-linecap="round" opacity="0.8"/>
+        <line x1="494" y1="512" x2="514" y2="512" stroke="#38bdf8" stroke-width="2.5" stroke-linecap="round" opacity="0.8"/>
+        <line x1="470" y1="468" x2="470" y2="488" stroke="#38bdf8" stroke-width="2.5" stroke-linecap="round" opacity="0.8"/>
+        <line x1="470" y1="536" x2="470" y2="556" stroke="#38bdf8" stroke-width="2.5" stroke-linecap="round" opacity="0.8"/>
+        <circle cx="470" cy="512" r="20" fill="#050a14" stroke="#38bdf8" stroke-width="3.5"/>
+        <circle cx="470" cy="512" r="7" fill="#ffffff"/>
+        <circle cx="655" cy="512" r="6.5" fill="#f59e0b"/>
+        <line x1="655" y1="512" x2="685" y2="465" stroke="#f59e0b" stroke-width="3" stroke-linecap="round" opacity="0.9"/>
+        <circle cx="685" cy="465" r="4.5" fill="#f59e0b"/>
+      </symbol>
+    </defs>
+  </svg>
+
+  <div id="app" class="app">
+    <header class="topbar">
+      <button id="homeBtn" class="ib" aria-label="Home / Library" title="Home / Saved studies"><svg><use href="#i-home"/></svg></button>
+      <button id="seriesBtn" class="ib" aria-label="Series" title="Series (F)"><svg><use href="#i-menu"/></svg></button>
+      <div class="title" id="title" style="cursor:pointer" title="Return to Home / Saved studies">
+        <div class="t1" id="titleMain">DICOM Mobile</div>
+        <div class="t2" id="titleSub"></div>
+      </div>
+      <button id="undoBtn" class="ib desk-only" aria-label="Undo" title="Undo (Ctrl+Z)" disabled><svg><use href="#i-undo"/></svg></button>
+      <button id="redoBtn" class="ib desk-only" aria-label="Redo" title="Redo (Ctrl+Shift+Z)" disabled><svg><use href="#i-redo"/></svg></button>
+      <button id="openBtn" class="ib" aria-label="Open" title="Open scans"><svg><use href="#i-open"/></svg></button>
+      <button id="moreBtn" class="ib" aria-label="More" title="More"><svg><use href="#i-more"/></svg></button>
+    </header>
+
+    <div class="body">
+      <aside id="seriesPanel" class="drawer" aria-label="Series">
+        <div class="drawer-head">
+          <b>Series</b>
+          <button class="ib small phone-only" data-close="seriesPanel" aria-label="Close"><svg><use href="#i-close"/></svg></button>
+        </div>
+        <div class="drawer-home-row" style="padding: 8px 12px; border-bottom: 1px solid var(--line);">
+          <button id="drawerHomeBtn" class="btn small ghost" style="width:100%; display:flex; align-items:center; justify-content:center; gap:8px;">
+            <svg style="width:16px; height:16px;"><use href="#i-home"/></svg>
+            <span>All Saved Studies</span>
+          </button>
+        </div>
+        <div id="patientBox" class="patient-box"></div>
+        <div id="seriesList" class="series-list"></div>
+      </aside>
+      <div id="scrim" class="scrim" hidden></div>
+
+      <main id="stage" class="stage">
+        <div id="viewports" class="viewports">
+          <div class="vp" data-index="0">
+            <div class="corners"><div class="c tl"></div><div class="c tr"></div><div class="c bl"></div><div class="c br"></div></div>
+            <div class="orient top"></div><div class="orient bottom"></div><div class="orient left"></div><div class="orient right"></div>
+            <div class="vtag">1</div>
+            <div class="spinner"></div>
+            <div class="scrubber" aria-label="Image slider"><div class="track"><div class="knob"></div></div><div class="bubble"></div></div>
+          </div>
+          <div class="vp" data-index="1" hidden>
+            <div class="corners"><div class="c tl"></div><div class="c tr"></div><div class="c bl"></div><div class="c br"></div></div>
+            <div class="orient top"></div><div class="orient bottom"></div><div class="orient left"></div><div class="orient right"></div>
+            <div class="vtag">2</div>
+            <div class="spinner"></div>
+            <div class="scrubber" aria-label="Image slider"><div class="track"><div class="knob"></div></div><div class="bubble"></div></div>
+          </div>
+        </div>
+
+        <div id="empty" class="empty">
+          <div class="home-hero">
+            <div class="logo-glow-wrap">
+              <svg class="logo" id="emptyLogo" style="cursor:pointer" title="DICOM Mobile"><use href="#i-logo"/></svg>
+            </div>
+            <div class="hero-badge">
+              <svg><use href="#i-shield"/></svg>
+              <span>Clinical DICOM · 100% On-Device</span>
+            </div>
+            <h1>DICOM Mobile</h1>
+            <p class="lead">Look through CT, MRI, X-ray and ultrasound scans: scroll through slices, adjust brightness, measure.</p>
+            <div id="progress" class="progress" hidden><div class="bar"><div id="progressBar"></div></div><div id="progressMsg" class="muted"></div></div>
+          </div>
+
+          <div id="savedStudies" class="saved-studies" hidden>
+            <div class="saved-head">
+              <div class="saved-head-left">
+                <svg class="saved-head-icon"><use href="#i-list"/></svg>
+                <b>Saved Studies Library</b>
+                <span id="savedCount" class="badge">0</span>
+              </div>
+              <div class="saved-head-right">
+                <input type="search" id="savedSearch" class="saved-search" placeholder="Search studies…" aria-label="Filter saved studies">
+              </div>
+            </div>
+            <div id="savedList" class="saved-list"></div>
+          </div>
+
+          <div id="emptyActions" class="empty-actions">
+            <button id="openFilesBig" class="btn action-card primary">
+              <span class="act-icon"><svg><use href="#i-open"/></svg></span>
+              <span class="act-body">
+                <span class="act-title">Open scans</span>
+                <span class="act-sub">DICOM files, folders, or .zip</span>
+              </span>
+            </button>
+            <button id="openDriveBig" class="btn action-card">
+              <span class="act-icon drive-icon"><svg><use href="#i-drive"/></svg></span>
+              <span class="act-body">
+                <span class="act-title">Choose from Google Drive</span>
+                <span class="act-sub">Import directly from cloud</span>
+              </span>
+            </button>
+            <button id="openFolderBig" class="btn action-card folder-card" hidden>
+              <span class="act-icon folder-icon"><svg><use href="#i-open"/></svg></span>
+              <span class="act-body">
+                <span class="act-title">Open a folder</span>
+                <span class="act-sub">Hospital CD or patient directory</span>
+              </span>
+            </button>
+            <button id="sampleBtn" class="btn action-card ghost">
+              <span class="act-icon sample-icon"><svg><use href="#i-presets"/></svg></span>
+              <span class="act-body">
+                <span class="act-title">Try a sample scan</span>
+                <span class="act-sub">Axial head CT study (16 slices)</span>
+              </span>
+            </button>
+          </div>
+
+          <ul class="tips">
+            <li class="tip-card">
+              <span class="tip-icon"><svg><use href="#i-shield"/></svg></span>
+              <span><b>Private:</b> your images are read on this device and never uploaded.</span>
+            </li>
+            <li class="tip-card">
+              <span class="tip-icon"><svg><use href="#i-open"/></svg></span>
+              <span>Open a whole folder (e.g. a hospital CD copied to your phone), pick files or a <b>.zip</b>, or choose directly from <b>Google Drive</b>.</span>
+            </li>
+            <li class="tip-card desk-only">
+              <span class="tip-icon"><svg><use href="#i-arrow"/></svg></span>
+              <span>You can also drag a folder or files onto this window.</span>
+            </li>
+            <li class="tip-card tip-muted">
+              <span class="tip-icon"><svg><use href="#i-info"/></svg></span>
+              <span class="muted">For viewing your own images. Not a medical device: diagnosis should come from your doctor's report.</span>
+            </li>
+          </ul>
+        </div>
+        <div id="toast" class="toast" hidden></div>
+        <div id="loupe" class="loupe" hidden><canvas width="240" height="240"></canvas><div class="loupe-val"></div></div>
+      </main>
+
+      <aside id="sheet" class="sheet" hidden aria-live="polite">
+        <div class="sheet-grip"></div>
+        <div class="sheet-head"><b id="sheetTitle"></b><button id="sheetClose" class="ib small" aria-label="Close"><svg><use href="#i-close"/></svg></button></div>
+        <div id="sheetBody" class="sheet-body"></div>
+      </aside>
+    </div>
+
+    <nav id="toolbar" class="toolbar" aria-label="Tools">
+      <button class="tool" data-tool="scroll" title="Scroll through images: drag up / down (S)"><svg><use href="#i-scroll"/></svg><span>Scroll</span></button>
+      <button class="tool" data-tool="window" title="Brightness / contrast: drag (W)"><svg><use href="#i-window"/></svg><span>Contrast</span></button>
+      <button class="tool" data-tool="pan" title="Move and zoom: drag, pinch (P)"><svg><use href="#i-pan"/></svg><span>Move</span></button>
+      <button class="tool" id="measureMenuBtn" data-menu="measure" title="Measure"><svg><use href="#i-measure"/></svg><span id="measureLabel">Measure</span></button>
+      <button class="tool" id="presetBtn" data-menu="presets" title="Window presets (1–9)"><svg><use href="#i-presets"/></svg><span>Presets</span></button>
+      <button class="tool" id="playBtn" title="Play through the images (Space)"><svg><use href="#i-play"/></svg><span>Play</span></button>
+    </nav>
+  </div>
+
+  <div id="menu" class="menu" hidden role="menu"></div>
+
+  <input id="filesInput" type="file" multiple hidden>
+  <input id="folderInput" type="file" webkitdirectory multiple hidden>
+  <div id="dropHint" class="drop-hint" hidden><div>Drop DICOM files, a folder or a .zip</div></div>
+
+</body>
+</html>
