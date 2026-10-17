@@ -318,13 +318,13 @@ public class FolderPickerPlugin extends Plugin {
                     futures.add(pool.submit(() -> {
                         boolean ok = copyFileFast(resolver, c.uri, c.target);
                         long actualSize = c.target.length();
-                        JSObject result = null;
+                        JSObject fileObj = null;
                         if (ok && (actualSize >= 128 || c.name.toLowerCase().endsWith(".zip"))) {
                             JSObject f = new JSObject();
                             f.put("path", c.target.getAbsolutePath());
                             f.put("name", c.name);
                             f.put("size", actualSize);
-                            result = f;
+                            fileObj = f;
                         } else {
                             c.target.delete();
                         }
@@ -338,7 +338,7 @@ public class FolderPickerPlugin extends Plugin {
                             progress.put("name", c.name);
                             notifyListeners("folderProgress", progress);
                         }
-                        return result;
+                        return fileObj;
                     }));
                 }
 
@@ -429,13 +429,13 @@ public class FolderPickerPlugin extends Plugin {
                     futures.add(pool.submit(() -> {
                         boolean ok = copyFileFast(resolver, c.uri, c.target);
                         long actualSize = c.target.length();
-                        JSObject result = null;
+                        JSObject fileObj = null;
                         if (ok && (actualSize >= 128 || c.name.toLowerCase().endsWith(".zip"))) {
                             JSObject f = new JSObject();
                             f.put("path", c.target.getAbsolutePath());
                             f.put("name", c.relative);
                             f.put("size", actualSize);
-                            result = f;
+                            fileObj = f;
                         } else {
                             c.target.delete();
                         }
@@ -450,7 +450,7 @@ public class FolderPickerPlugin extends Plugin {
                             progress.put("name", c.name);
                             notifyListeners("folderProgress", progress);
                         }
-                        return result;
+                        return fileObj;
                     }));
                 }
 
