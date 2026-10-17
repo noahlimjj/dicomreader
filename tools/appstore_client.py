@@ -322,32 +322,29 @@ class AppStoreClient:
 
         # Age rating on ageRatingDeclarations/{version_id}
         try:
-            age_payload = {
-                "data": {
-                    "type": "ageRatingDeclarations",
-                    "id": version_id,
-                    "attributes": {
-                        "alcoholTobaccoOrDrugUseOrReferences": "NONE",
-                        "contests": "NONE",
-                        "gambling": False,
-                        "gamblingSimulated": "NONE",
-                        "gunsOrOtherWeapons": "NONE",
-                        "horrorOrFearThemes": "NONE",
-                        "matureOrSuggestiveThemes": "NONE",
-                        "medicalOrTreatmentInformation": "NONE",
-                        "profanityOrCrudeHumor": "NONE",
-                        "sexualContentGraphicAndNudity": "NONE",
-                        "sexualContentOrNudity": "NONE",
-                        "violenceCartoonOrFantasy": "NONE",
-                        "violenceRealistic": "NONE",
-                        "violenceRealisticProlongedGraphicOrSadistic": "NONE",
-                        "unrestrictedWebAccess": False,
-                        "seventeenPlus": False
+            curr = self.request("GET", f"ageRatingDeclarations/{version_id}")
+            if curr and curr.get("data"):
+                attrs = curr["data"].get("attributes", {})
+                for k in list(attrs.keys()):
+                    if k == "kidsAgeBand":
+                        continue
+                    elif isinstance(attrs[k], bool):
+                        attrs[k] = False
+                    elif isinstance(attrs[k], str) or attrs[k] is None:
+                        if k in ["unrestrictedWebAccess", "gambling", "parentalControls", "userGeneratedContent"]:
+                            attrs[k] = False
+                        else:
+                            attrs[k] = "NONE"
+                attrs.pop("seventeenPlus", None)
+                age_payload = {
+                    "data": {
+                        "type": "ageRatingDeclarations",
+                        "id": version_id,
+                        "attributes": attrs
                     }
                 }
-            }
-            self.request("PATCH", f"ageRatingDeclarations/{version_id}", data=age_payload)
-            print("✓ Age rating declaration updated (4+ / all NONE)")
+                self.request("PATCH", f"ageRatingDeclarations/{version_id}", data=age_payload)
+                print("✓ Age rating declaration updated (all NONE/False)")
         except Exception as e:
             print(f"Age rating update note: {e}")
 
@@ -628,8 +625,18 @@ class AppStoreClient:
                     }
                 }
             }
-            self.request("POST", "reviewSubmissionItems", data=item_payload)
-            print(f"Added App Store Version {version_id} to review submission.")
+            try:
+                self.request("POST", "reviewSubmissionItems", data=item_payload)
+                print(f"Added App Store Version {version_id} to review submission.")
+            except Exception as e:
+                print(f"\n⚠️  Submission Item Attachment Note: {e}")
+                print("\n=======================================================")
+                print("ACTION REQUIRED ON APP STORE CONNECT:")
+                print(f"1. Open App Privacy: https://appstoreconnect.apple.com/apps/{app_id}/appstore/privacy")
+                print("2. Click 'Get Started' -> Select 'No, we do not collect data from this app' -> 'Publish'")
+                print(f"3. On version page (https://appstoreconnect.apple.com/apps/{app_id}/appstore/ios/version/deliverable), click 'Submit for Review' (or re-run workflow)")
+                print("=======================================================\n")
+                return None
 
         submit_payload = {
             "data": {
@@ -640,10 +647,14 @@ class AppStoreClient:
                 }
             }
         }
-        final_res = self.request("PATCH", f"reviewSubmissions/{sub_id}", data=submit_payload)
-        state = final_res["data"]["attributes"].get("state")
-        print(f"🎉 Successfully submitted for App Review! Current state: {state}")
-        return final_res["data"]
+        try:
+            final_res = self.request("PATCH", f"reviewSubmissions/{sub_id}", data=submit_payload)
+            state = final_res["data"]["attributes"].get("state")
+            print(f"🎉 Successfully submitted for App Review! Current state: {state}")
+            return final_res["data"]
+        except Exception as e:
+            print(f"Review submit note: {e}")
+            return None
 
 def main():
     mode = sys.argv[1] if len(sys.argv) > 1 else "all"
@@ -710,10 +721,7 @@ def main():
     # 5. Free pricing
     client.ensure_free_pricing(app_id)
 
-    # 6. Data usages / privacy declaration
-    client.ensure_data_usages(app_id)
-
-    # 7. Update review detail notes
+    # 6. Update review detail notes
     client.update_review_detail(version_id, review_notes)
 
     # 7. Upload screenshots
