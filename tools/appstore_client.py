@@ -328,6 +328,7 @@ class AppStoreClient:
                             "healthOrWellnessTopics": False,
                             "messagingAndChat": False,
                             "socialMedia": False,
+                            "ageAssurance": False,
                             "ageRatingOverrideV2": "NONE",
                             "koreaAgeRatingOverride": "NONE",
                         }
