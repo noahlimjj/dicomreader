@@ -198,10 +198,10 @@ class AppStoreClient:
             "demoAccountRequired": False
         }
         fallback_contact = {
-            "contactFirstName": "Noah",
-            "contactLastName": "Lim",
-            "contactEmail": "noahlimjj@gmail.com",
-            "contactPhone": "+65 8000 0000"
+            "contactFirstName": os.environ.get("ASC_CONTACT_FIRST_NAME", "Noah"),
+            "contactLastName": os.environ.get("ASC_CONTACT_LAST_NAME", "Lim"),
+            "contactEmail": os.environ.get("ASC_CONTACT_EMAIL", "noahlimjj@gmail.com"),
+            "contactPhone": os.environ.get("ASC_CONTACT_PHONE", "+65 9123 4567")
         }
         if detail:
             d_id = detail["id"]
@@ -237,6 +237,56 @@ class AppStoreClient:
             }
             res = self.request("POST", "appStoreReviewDetails", data=payload)
             return res["data"]
+
+    def ensure_age_rating(self, version_id):
+        print("Checking Age Rating Declaration...")
+        try:
+            res = self.request("GET", f"appStoreVersions/{version_id}/ageRatingDeclaration")
+            if res and res.get("data"):
+                print(f"Age rating declaration exists (ID: {res['data']['id']})")
+                return res["data"]
+        except Exception as e:
+            print(f"Age rating check note: {e}")
+
+        payload_attrs = {
+            "alcoholTobaccoOrDrugUseOrReferences": "NONE",
+            "contests": "NONE",
+            "gambling": False,
+            "gamblingSimulated": "NONE",
+            "gunsOrOtherWeapons": "NONE",
+            "horrorOrFearThemes": "NONE",
+            "matureOrSuggestiveThemes": "NONE",
+            "medicalOrTreatmentInformation": "INFREQUENT_OR_MILD",
+            "profanityOrCrudeHumor": "NONE",
+            "sexualContentGraphicAndNudity": "NONE",
+            "sexualContentOrNudity": "NONE",
+            "violenceCartoonOrFantasy": "NONE",
+            "violenceRealistic": "NONE",
+            "violenceRealisticProlongedGraphicOrSadistic": "NONE",
+            "unrestrictedWebAccess": False,
+            "seventeenPlus": False
+        }
+        try:
+            print("Configuring Age Rating Declaration...")
+            payload = {
+                "data": {
+                    "type": "ageRatingDeclarations",
+                    "attributes": payload_attrs,
+                    "relationships": {
+                        "appStoreVersion": {
+                            "data": {
+                                "type": "appStoreVersions",
+                                "id": version_id
+                            }
+                        }
+                    }
+                }
+            }
+            res = self.request("POST", "ageRatingDeclarations", data=payload)
+            return res["data"]
+        except Exception as e:
+            print(f"Note on age rating configuration: {e}")
+            return None
 
     def attach_build(self, version_id, build_id):
         print(f"Attaching build {build_id} to version {version_id}...")
@@ -501,10 +551,13 @@ def main():
     # 3. Update review detail notes
     client.update_review_detail(version_id, review_notes)
 
-    # 4. Upload screenshots
+    # 4. Age Rating declaration
+    client.ensure_age_rating(version_id)
+
+    # 5. Upload screenshots
     client.upload_screenshots_for_loc(loc_id, "app/store/screenshots")
 
-    # 5. Attach latest valid build
+    # 6. Attach latest valid build
     build = client.get_latest_valid_build(app_id, max_wait_seconds=900)
     if build:
         client.attach_build(version_id, build["id"])
