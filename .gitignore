@@ -16,7 +16,8 @@ VINFO/
 
 # test output
 node_modules/
-screenshots/
+/screenshots/
+!app/store/screenshots/**
 
 # the bundled sample is a synthetic phantom (app/test/tools/make_sample.py), not patient data
 !app/public/samples/*.dcm

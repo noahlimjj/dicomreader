@@ -72,8 +72,9 @@ class AppStoreClient:
         return app
 
     def get_builds(self, app_id):
-        data = self.request("GET", f"apps/{app_id}/builds", params={"sort": "-uploadedDate", "limit": 10})
+        data = self.request("GET", f"apps/{app_id}/builds", params={"limit": 10})
         builds = data.get("data", [])
+        builds = sorted(builds, key=lambda b: b.get("attributes", {}).get("uploadedDate") or "", reverse=True)
         print(f"Found {len(builds)} builds for app.")
         for b in builds:
             attrs = b["attributes"]
@@ -238,55 +239,6 @@ class AppStoreClient:
             res = self.request("POST", "appStoreReviewDetails", data=payload)
             return res["data"]
 
-    def ensure_age_rating(self, version_id):
-        print("Checking Age Rating Declaration...")
-        try:
-            res = self.request("GET", f"appStoreVersions/{version_id}/ageRatingDeclaration")
-            if res and res.get("data"):
-                print(f"Age rating declaration exists (ID: {res['data']['id']})")
-                return res["data"]
-        except Exception as e:
-            print(f"Age rating check note: {e}")
-
-        payload_attrs = {
-            "alcoholTobaccoOrDrugUseOrReferences": "NONE",
-            "contests": "NONE",
-            "gambling": False,
-            "gamblingSimulated": "NONE",
-            "gunsOrOtherWeapons": "NONE",
-            "horrorOrFearThemes": "NONE",
-            "matureOrSuggestiveThemes": "NONE",
-            "medicalOrTreatmentInformation": "INFREQUENT_OR_MILD",
-            "profanityOrCrudeHumor": "NONE",
-            "sexualContentGraphicAndNudity": "NONE",
-            "sexualContentOrNudity": "NONE",
-            "violenceCartoonOrFantasy": "NONE",
-            "violenceRealistic": "NONE",
-            "violenceRealisticProlongedGraphicOrSadistic": "NONE",
-            "unrestrictedWebAccess": False,
-            "seventeenPlus": False
-        }
-        try:
-            print("Configuring Age Rating Declaration...")
-            payload = {
-                "data": {
-                    "type": "ageRatingDeclarations",
-                    "attributes": payload_attrs,
-                    "relationships": {
-                        "appStoreVersion": {
-                            "data": {
-                                "type": "appStoreVersions",
-                                "id": version_id
-                            }
-                        }
-                    }
-                }
-            }
-            res = self.request("POST", "ageRatingDeclarations", data=payload)
-            return res["data"]
-        except Exception as e:
-            print(f"Note on age rating configuration: {e}")
-            return None
 
     def attach_build(self, version_id, build_id):
         print(f"Attaching build {build_id} to version {version_id}...")
@@ -551,13 +503,13 @@ def main():
     # 3. Update review detail notes
     client.update_review_detail(version_id, review_notes)
 
-    # 4. Age Rating declaration
-    client.ensure_age_rating(version_id)
+    # 4. Upload screenshots
+    screenshots_path = Path("app/store/screenshots")
+    if not screenshots_path.exists() and Path("store/screenshots").exists():
+        screenshots_path = Path("store/screenshots")
+    client.upload_screenshots_for_loc(loc_id, screenshots_path)
 
-    # 5. Upload screenshots
-    client.upload_screenshots_for_loc(loc_id, "app/store/screenshots")
-
-    # 6. Attach latest valid build
+    # 5. Attach latest valid build
     build = client.get_latest_valid_build(app_id, max_wait_seconds=900)
     if build:
         client.attach_build(version_id, build["id"])
