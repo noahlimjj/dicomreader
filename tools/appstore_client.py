@@ -305,34 +305,38 @@ class AppStoreClient:
                     decl = self.request("GET", f"appInfos/{info_id}/ageRatingDeclaration")
                     if decl and decl.get("data"):
                         decl_id = decl["data"]["id"]
-                        attrs = decl["data"].get("attributes", {})
-                        string_enum_attrs = {
-                            "alcoholTobaccoOrDrugUseOrReferences",
-                            "contests",
-                            "gamblingSimulated",
-                            "gunsOrOtherWeapons",
-                            "horrorOrFearThemes",
-                            "matureOrSuggestiveThemes",
-                            "medicalOrTreatmentInformation",
-                            "profanityOrCrudeHumor",
-                            "sexualContentGraphicAndNudity",
-                            "sexualContentOrNudity",
-                            "violenceCartoonOrFantasy",
-                            "violenceRealistic",
-                            "violenceRealisticProlongedGraphicOrSadistic",
+                        patch_attrs = {
+                            "alcoholTobaccoOrDrugUseOrReferences": "NONE",
+                            "contests": "NONE",
+                            "gamblingSimulated": "NONE",
+                            "gunsOrOtherWeapons": "NONE",
+                            "horrorOrFearThemes": "NONE",
+                            "matureOrSuggestiveThemes": "NONE",
+                            "medicalOrTreatmentInformation": "NONE",
+                            "profanityOrCrudeHumor": "NONE",
+                            "sexualContentGraphicAndNudity": "NONE",
+                            "sexualContentOrNudity": "NONE",
+                            "violenceCartoonOrFantasy": "NONE",
+                            "violenceRealistic": "NONE",
+                            "violenceRealisticProlongedGraphicOrSadistic": "NONE",
+                            "unrestrictedWebAccess": False,
+                            "gambling": False,
+                            "parentalControls": False,
+                            "userGeneratedContent": False,
+                            "advertising": False,
+                            "lootBox": False,
+                            "healthOrWellnessTopics": False,
+                            "messagingAndChat": False,
+                            "socialMedia": False,
+                            "ageRatingOverride": "NONE",
+                            "ageRatingOverrideV2": "NONE",
+                            "koreaAgeRatingOverride": "NONE",
                         }
-                        for k in list(attrs.keys()):
-                            if k in ["kidsAgeBand", "seventeenPlus"]:
-                                attrs.pop(k, None)
-                            elif k in string_enum_attrs:
-                                attrs[k] = "NONE"
-                            else:
-                                attrs[k] = False
                         patch_payload = {
                             "data": {
                                 "type": "ageRatingDeclarations",
                                 "id": decl_id,
-                                "attributes": attrs
+                                "attributes": patch_attrs
                             }
                         }
                         self.request("PATCH", f"ageRatingDeclarations/{decl_id}", data=patch_payload)
