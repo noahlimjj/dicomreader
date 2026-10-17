@@ -1,0 +1,38 @@
+name: App Store Submission
+
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        description: 'Action to perform'
+        required: true
+        default: 'all'
+        type: choice
+        options:
+          - all
+          - submit
+          - status
+
+jobs:
+  appstore:
+    name: App Store Connect Automation
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          pip install requests pyjwt cryptography
+
+      - name: Run App Store Connect Client
+        env:
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          ASC_KEY_P8: ${{ secrets.ASC_KEY_P8 }}
+        run: |
+          python tools/appstore_client.py ${{ inputs.action }}
