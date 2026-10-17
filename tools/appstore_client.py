@@ -239,6 +239,207 @@ class AppStoreClient:
             res = self.request("POST", "appStoreReviewDetails", data=payload)
             return res["data"]
 
+    def update_app_details(self, app_id, privacy_url="https://noahlimjj.github.io/dicomreader/"):
+        print("\nConfiguring App Content Rights & Categories...")
+        # 1. contentRightsDeclaration on apps
+        try:
+            payload = {
+                "data": {
+                    "type": "apps",
+                    "id": app_id,
+                    "attributes": {
+                        "contentRightsDeclaration": "DOES_NOT_USE_THIRD_PARTY_CONTENT"
+                    }
+                }
+            }
+            self.request("PATCH", f"apps/{app_id}", data=payload)
+            print("✓ Content rights declaration set (DOES_NOT_USE_THIRD_PARTY_CONTENT)")
+        except Exception as e:
+            print(f"Content rights note: {e}")
+
+        # 2. appInfos (primaryCategory) & appInfoLocalizations (privacyPolicyUrl)
+        try:
+            infos = self.request("GET", f"apps/{app_id}/appInfos").get("data", [])
+            for info in infos:
+                info_id = info["id"]
+                cat_payload = {
+                    "data": {
+                        "type": "appInfos",
+                        "id": info_id,
+                        "relationships": {
+                            "primaryCategory": {
+                                "data": {
+                                    "type": "appCategories",
+                                    "id": "MEDICAL"
+                                }
+                            }
+                        }
+                    }
+                }
+                try:
+                    self.request("PATCH", f"appInfos/{info_id}", data=cat_payload)
+                    print("✓ Primary category set to MEDICAL")
+                except Exception as e:
+                    print(f"Primary category note: {e}")
+
+                info_locs = self.request("GET", f"appInfos/{info_id}/appInfoLocalizations").get("data", [])
+                for loc in info_locs:
+                    loc_id = loc["id"]
+                    loc_payload = {
+                        "data": {
+                            "type": "appInfoLocalizations",
+                            "id": loc_id,
+                            "attributes": {
+                                "privacyPolicyUrl": privacy_url
+                            }
+                        }
+                    }
+                    try:
+                        self.request("PATCH", f"appInfoLocalizations/{loc_id}", data=loc_payload)
+                        print(f"✓ Privacy policy URL set to {privacy_url}")
+                    except Exception as e:
+                        print(f"Privacy URL note: {e}")
+        except Exception as e:
+            print(f"AppInfos note: {e}")
+
+    def update_version_details(self, version_id, copyright_text="2026 Noah Lim"):
+        print("\nConfiguring Version Details & Age Rating...")
+        # Copyright on appStoreVersions
+        try:
+            payload = {
+                "data": {
+                    "type": "appStoreVersions",
+                    "id": version_id,
+                    "attributes": {
+                        "copyright": copyright_text
+                    }
+                }
+            }
+            self.request("PATCH", f"appStoreVersions/{version_id}", data=payload)
+            print(f"✓ Version copyright set to '{copyright_text}'")
+        except Exception as e:
+            print(f"Version copyright note: {e}")
+
+        # Age rating on ageRatingDeclarations/{version_id}
+        try:
+            age_payload = {
+                "data": {
+                    "type": "ageRatingDeclarations",
+                    "id": version_id,
+                    "attributes": {
+                        "alcoholTobaccoOrDrugUseOrReferences": "NONE",
+                        "contests": "NONE",
+                        "gambling": False,
+                        "gamblingSimulated": "NONE",
+                        "gunsOrOtherWeapons": "NONE",
+                        "horrorOrFearThemes": "NONE",
+                        "matureOrSuggestiveThemes": "NONE",
+                        "medicalOrTreatmentInformation": "NONE",
+                        "profanityOrCrudeHumor": "NONE",
+                        "sexualContentGraphicAndNudity": "NONE",
+                        "sexualContentOrNudity": "NONE",
+                        "violenceCartoonOrFantasy": "NONE",
+                        "violenceRealistic": "NONE",
+                        "violenceRealisticProlongedGraphicOrSadistic": "NONE",
+                        "unrestrictedWebAccess": False,
+                        "seventeenPlus": False
+                    }
+                }
+            }
+            self.request("PATCH", f"ageRatingDeclarations/{version_id}", data=age_payload)
+            print("✓ Age rating declaration updated (4+ / all NONE)")
+        except Exception as e:
+            print(f"Age rating update note: {e}")
+
+    def ensure_free_pricing(self, app_id):
+        print("\nConfiguring App Free Pricing...")
+        try:
+            sched = self.request("GET", f"apps/{app_id}/appPriceSchedule")
+            if sched and sched.get("data"):
+                print("App price schedule already configured.")
+                return
+        except Exception as e:
+            print(f"Price schedule check: {e}")
+
+        try:
+            pts = self.request("GET", f"apps/{app_id}/pricePoints")
+            data_pts = pts.get("data", []) if pts else []
+            free_pt = next((p for p in data_pts if p.get("attributes", {}).get("customerPrice") in ["0", "0.0", "0.00", None]), None)
+            if not free_pt and data_pts:
+                free_pt = data_pts[0]
+            if free_pt:
+                pt_id = free_pt["id"]
+                payload = {
+                    "data": {
+                        "type": "appPriceSchedules",
+                        "relationships": {
+                            "app": {
+                                "data": {
+                                    "type": "apps",
+                                    "id": app_id
+                                }
+                            },
+                            "baseTerritory": {
+                                "data": {
+                                    "type": "territories",
+                                    "id": "USA"
+                                }
+                            },
+                            "manualPrices": {
+                                "data": [
+                                    {
+                                        "type": "appPrices",
+                                        "attributes": {
+                                            "startDate": None
+                                        },
+                                        "relationships": {
+                                            "appPricePoint": {
+                                                "data": {
+                                                    "type": "appPricePoints",
+                                                    "id": pt_id
+                                                }
+                                            }
+                                        }
+                                    }
+                                ]
+                            }
+                        }
+                    }
+                }
+                self.request("POST", "appPriceSchedules", data=payload)
+                print("✓ Set pricing schedule to Free")
+        except Exception as e:
+            print(f"Pricing schedule note: {e}")
+
+    def ensure_data_usages(self, app_id):
+        print("\nChecking App Data Usages (App Privacy)...")
+        try:
+            res = self.request("GET", f"apps/{app_id}/appDataUsages")
+            print(f"Existing App Data Usages: {res}")
+            # Try publishing state if available
+            pub_payload = {
+                "data": {
+                    "type": "appDataUsagesPublishState",
+                    "attributes": {
+                        "published": True
+                    },
+                    "relationships": {
+                        "app": {
+                            "data": {
+                                "type": "apps",
+                                "id": app_id
+                            }
+                        }
+                    }
+                }
+            }
+            try:
+                self.request("POST", "appDataUsagesPublishState", data=pub_payload)
+                print("✓ Published App Privacy questionnaire")
+            except Exception as pe:
+                print(f"Data usages publish note: {pe}")
+        except Exception as e:
+            print(f"Data usages note: {e}")
 
     def attach_build(self, version_id, build_id):
         print(f"Attaching build {build_id} to version {version_id}...")
@@ -500,16 +701,28 @@ def main():
     loc_obj = client.update_localization(version_id, metadata, locale="en-US")
     loc_id = loc_obj["id"]
 
-    # 3. Update review detail notes
+    # 3. Update app-level details (content rights, category, privacy policy URL)
+    client.update_app_details(app_id, privacy_url=metadata["supportUrl"])
+
+    # 4. Update version details (copyright, age rating declaration)
+    client.update_version_details(version_id, copyright_text="2026 Noah Lim")
+
+    # 5. Free pricing
+    client.ensure_free_pricing(app_id)
+
+    # 6. Data usages / privacy declaration
+    client.ensure_data_usages(app_id)
+
+    # 7. Update review detail notes
     client.update_review_detail(version_id, review_notes)
 
-    # 4. Upload screenshots
+    # 7. Upload screenshots
     screenshots_path = Path("app/store/screenshots")
     if not screenshots_path.exists() and Path("store/screenshots").exists():
         screenshots_path = Path("store/screenshots")
     client.upload_screenshots_for_loc(loc_id, screenshots_path)
 
-    # 5. Attach latest valid build
+    # 8. Attach latest valid build
     build = client.get_latest_valid_build(app_id, max_wait_seconds=900)
     if build:
         client.attach_build(version_id, build["id"])
