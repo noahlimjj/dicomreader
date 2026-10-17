@@ -53,14 +53,16 @@
       <symbol id="i-probe" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 2v5M12 17v5M2 12h5M17 12h5"/></symbol>
       <symbol id="i-drive" viewBox="0 0 24 24"><path d="M9 3h6l6 10.5-3 5.5H6L3 13.5z"/><path d="M9 3l6 10.5H3M15 3L6 19M21 13.5H9"/></symbol>
       <symbol id="i-shield" viewBox="0 0 24 24"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></symbol>
+      <symbol id="i-home" viewBox="0 0 24 24"><path d="M3 10.5L12 3l9 7.5V20a1 1 0 0 1-1 1h-5v-6h-6v6H4a1 1 0 0 1-1-1z"/></symbol>
       <symbol id="i-logo" viewBox="0 0 64 64"><rect x="4" y="4" width="56" height="56" rx="14" fill="#11161d" stroke="#3a8dde" stroke-width="3"/><ellipse cx="32" cy="33" rx="17" ry="20" fill="none" stroke="#e8eef5" stroke-width="4"/><ellipse cx="32" cy="33" rx="11" ry="14" fill="#5b6774" stroke="none"/><path d="M27 29c2-3 8-3 10 0" stroke="#11161d" stroke-width="3" fill="none"/><path d="M8 33h48" stroke="#ffb547" stroke-width="2.5" stroke-dasharray="4 3"/></symbol>
     </defs>
   </svg>
 
   <div id="app" class="app">
     <header class="topbar">
+      <button id="homeBtn" class="ib" aria-label="Home / Library" title="Home / Saved studies"><svg><use href="#i-home"/></svg></button>
       <button id="seriesBtn" class="ib" aria-label="Series" title="Series (F)"><svg><use href="#i-menu"/></svg></button>
-      <div class="title" id="title">
+      <div class="title" id="title" style="cursor:pointer" title="Return to Home / Saved studies">
         <div class="t1" id="titleMain">DICOM Mobile</div>
         <div class="t2" id="titleSub"></div>
       </div>
@@ -75,6 +77,12 @@
         <div class="drawer-head">
           <b>Series</b>
           <button class="ib small phone-only" data-close="seriesPanel" aria-label="Close"><svg><use href="#i-close"/></svg></button>
+        </div>
+        <div class="drawer-home-row" style="padding: 8px 12px; border-bottom: 1px solid var(--line);">
+          <button id="drawerHomeBtn" class="btn small ghost" style="width:100%; display:flex; align-items:center; justify-content:center; gap:8px;">
+            <svg style="width:16px; height:16px;"><use href="#i-home"/></svg>
+            <span>All Saved Studies</span>
+          </button>
         </div>
         <div id="patientBox" class="patient-box"></div>
         <div id="seriesList" class="series-list"></div>
@@ -100,22 +108,24 @@
         </div>
 
         <div id="empty" class="empty">
-          <svg class="logo"><use href="#i-logo"/></svg>
+          <svg class="logo" id="emptyLogo" style="cursor:pointer" title="DICOM Mobile"><use href="#i-logo"/></svg>
           <h1>DICOM Mobile</h1>
           <p class="lead">Look through CT, MRI, X-ray and ultrasound scans: scroll through slices, adjust brightness, measure.</p>
+          <div id="progress" class="progress" hidden><div class="bar"><div id="progressBar"></div></div><div id="progressMsg" class="muted"></div></div>
+
+          <div id="savedStudies" class="saved-studies" hidden>
+            <div class="saved-head">
+              <b>Saved Studies Library</b>
+              <span id="savedCount" class="badge">0</span>
+            </div>
+            <div id="savedList" class="saved-list"></div>
+          </div>
+
           <div id="emptyActions" class="empty-actions">
             <button id="openFilesBig" class="btn primary big"><svg><use href="#i-open"/></svg> Open scans</button>
             <button id="openDriveBig" class="btn big"><svg><use href="#i-drive"/></svg> Choose from Google Drive</button>
             <button id="openFolderBig" class="btn big" hidden>Open a folder</button>
             <button id="sampleBtn" class="btn big ghost">Try a sample scan</button>
-          </div>
-          <div id="progress" class="progress" hidden><div class="bar"><div id="progressBar"></div></div><div id="progressMsg" class="muted"></div></div>
-          <div id="savedStudies" class="saved-studies" hidden>
-            <div class="saved-head">
-              <b>Saved Studies</b>
-              <span id="savedCount" class="badge">0</span>
-            </div>
-            <div id="savedList" class="saved-list"></div>
           </div>
           <ul class="tips">
             <li>Open a whole folder (e.g. a hospital CD copied to your phone), pick files or a <b>.zip</b>, or choose directly from <b>Google Drive</b>.</li>

@@ -83,7 +83,18 @@ export async function resolveNativeFilePath(nativePath, relPath) {
 export function studyIdOf(series) {
   const f0 = series[0]?.first;
   if (!f0) return `study-${Date.now()}`;
-  const raw = f0.studyUid || `${f0.patientName}|${f0.studyDate}|${series.map((s) => s.key).join(',')}`;
+  const hasUid = f0.studyUid && f0.studyUid !== 'unknown-study';
+  if (hasUid) return `study:${f0.studyUid}`;
+
+  const sigParts = [
+    f0.patientName || '',
+    f0.patientId || '',
+    f0.studyDate || f0.seriesDate || '',
+    f0.studyDesc || '',
+    series.map((s) => `${s.title}:${s.images}`).join(';'),
+  ].filter(Boolean);
+
+  const raw = sigParts.length ? sigParts.join('|') : (f0.sop || f0.seriesUid || `study-${Date.now()}`);
   return `study:${raw}`;
 }
 
@@ -145,9 +156,16 @@ export async function saveStudyToLibrary(series, indexedEntries, measurements = 
     if (!entry.nativePath) {
       try {
         const src = await entry.getSource();
-        const blobData = src instanceof Blob ? src : (src instanceof ArrayBuffer || ArrayBuffer.isView(src)) ? new Blob([src]) : null;
-        if (blobData) {
-          blobsToSave.push({id: `${id}|${entry.key}`, studyId: id, data: blobData});
+        let buf = null;
+        if (src instanceof ArrayBuffer) {
+          buf = src.slice(0);
+        } else if (ArrayBuffer.isView(src)) {
+          buf = src.buffer.slice(src.byteOffset, src.byteOffset + src.byteLength);
+        } else if (src instanceof Blob) {
+          buf = await src.arrayBuffer();
+        }
+        if (buf) {
+          blobsToSave.push({id: `${id}|${entry.key}`, studyId: id, data: buf});
         }
       } catch (e) {
         console.warn('Could not persist blob for', entry.name, e);
@@ -174,13 +192,27 @@ export async function saveStudyToLibrary(series, indexedEntries, measurements = 
     updatedAt: Date.now(),
   };
 
-  const tx = db.transaction(['studies', 'blobs'], 'readwrite');
+  // 1. Save study metadata doc
+  const tx = db.transaction('studies', 'readwrite');
   tx.objectStore('studies').put(studyDoc);
-  const blobStore = tx.objectStore('blobs');
-  for (const b of blobsToSave) {
-    blobStore.put(b);
-  }
   await txDone(tx);
+
+  // 2. Save binary blobs in safe batches of 20
+  if (blobsToSave.length) {
+    for (let i = 0; i < blobsToSave.length; i += 20) {
+      const chunk = blobsToSave.slice(i, i + 20);
+      try {
+        const btx = db.transaction('blobs', 'readwrite');
+        const bStore = btx.objectStore('blobs');
+        for (const b of chunk) {
+          bStore.put(b);
+        }
+        await txDone(btx);
+      } catch (err) {
+        console.warn('Batch blob save warning', err);
+      }
+    }
+  }
   return id;
 }
 
@@ -227,7 +259,7 @@ export async function loadSavedStudy(studyId) {
         const btx = db.transaction('blobs', 'readonly');
         const bdoc = await reqResult(btx.objectStore('blobs').get(`${studyId}|${r.key}`));
         if (!bdoc?.data) throw new Error(`Saved data missing for ${r.name}`);
-        return bdoc.data;
+        return bdoc.data instanceof ArrayBuffer ? bdoc.data.slice(0) : bdoc.data;
       },
     };
     items.push(...makeItems(entry, r.meta));

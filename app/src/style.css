@@ -77,6 +77,9 @@ b { font-weight: 600; }
 .ib.on { color: var(--accent-2); }
 .ib:disabled { opacity: 0.35; }
 .ib.small { width: 36px; height: 36px; }
+@media (max-width: 540px) {
+  #undoBtn, #redoBtn { display: none; }
+}
 
 /* ---- layout ---- */
 .body { grid-area: body; position: relative; display: flex; min-height: 0; min-width: 0; }
@@ -401,7 +404,8 @@ input[type="range"] { width: 100%; accent-color: var(--accent-2); height: 32px; 
 /* ---- in-app saved studies library ("patient folders") ---- */
 .saved-studies {
   width: min(100%, 460px);
-  margin-top: 22px;
+  margin-top: 14px;
+  margin-bottom: 20px;
   text-align: left;
 }
 .saved-head {

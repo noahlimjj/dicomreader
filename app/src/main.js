@@ -269,6 +269,7 @@ function closeStudy() {
 function showEmpty(on) {
   $('empty').hidden = !on;
   document.body.classList.toggle('no-study', on);
+  $('homeBtn')?.classList.toggle('on', on);
   if (on) {
     setProgress(null);
     renderSavedStudies();
@@ -364,6 +365,9 @@ async function queueThumbnails() {
       const it = s.items[Math.floor(s.items.length / 2)];
       const image = await loader.image(it, 0);
       s.thumb = thumbnail(image, it);
+      if (state.activeStudyId && s.thumb && (s === series[0] || !series[0].thumb)) {
+        updateSavedStudyMeta(state.activeStudyId, {thumb: s.thumb}).catch(() => {});
+      }
       const holder = document.querySelector(`.series[data-index="${state.series.indexOf(s)}"] .thumb`);
       if (holder) {
         const img = document.createElement('img');
@@ -1321,10 +1325,10 @@ async function openSourceMenu(anchor) {
   const saved = await listSavedStudies();
   openMenu(anchor, [
     {title: 'Open scans'},
+    ...(saved.length ? [{label: `Saved studies (${saved.length})`, icon: 'list', action: () => openSheet('saved')}, '-'] : []),
     {label: 'Choose files or a ZIP', icon: 'open', action: pickFiles},
     {label: 'Choose from Google Drive', icon: 'drive', action: openGoogleDrive},
     ...(canPickFolder ? [{label: 'Open a folder', icon: 'open', action: pickFolder}] : []),
-    ...(saved.length ? ['-', {label: `Saved studies (${saved.length})`, icon: 'list', action: () => openSheet('saved')}] : []),
   ]);
 }
 
@@ -2052,6 +2056,10 @@ function onBack() {
     setLayout(1);
     return true;
   }
+  if (state.series.length) {
+    closeStudy();
+    return true;
+  }
   return false;
 }
 
@@ -2122,6 +2130,18 @@ function onKey(e) {
 
 function bindUi() {
   for (const b of document.querySelectorAll('.tool[data-tool]')) b.addEventListener('click', () => setTool(b.dataset.tool));
+  $('homeBtn')?.addEventListener('click', () => {
+    if (state.series.length) closeStudy();
+    else renderSavedStudies();
+  });
+  $('title')?.addEventListener('click', () => {
+    if (state.series.length) closeStudy();
+  });
+  $('drawerHomeBtn')?.addEventListener('click', () => {
+    toggleDrawer(false);
+    closeStudy();
+  });
+  $('emptyLogo')?.addEventListener('click', () => renderSavedStudies());
   $('measureMenuBtn').addEventListener('click', (e) => measureMenu(e.currentTarget));
   $('presetBtn').addEventListener('click', (e) => presetsMenu(e.currentTarget));
   $('playBtn').addEventListener('click', () => activeVp().togglePlay());
