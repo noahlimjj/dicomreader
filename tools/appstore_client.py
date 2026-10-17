@@ -80,7 +80,7 @@ class AppStoreClient:
             print(f" - Build ID: {b['id']}, Version: {attrs.get('version')}, State: {attrs.get('processingState')}, Uploaded: {attrs.get('uploadedDate')}")
         return builds
 
-    def get_latest_valid_build(self, app_id, max_wait_seconds=600):
+    def get_latest_valid_build(self, app_id, max_wait_seconds=900):
         start = time.time()
         while True:
             builds = self.get_builds(app_id)
@@ -117,6 +117,9 @@ class AppStoreClient:
             v_str = attrs.get("versionString")
             print(f"Existing version {v_str}: state={state} (ID: {v['id']})")
             if state in ["PREPARE_FOR_SUBMISSION", "DEVELOPER_REJECTED", "REJECTED"]:
+                return v
+            if state in ["WAITING_FOR_REVIEW", "IN_REVIEW", "PENDING_APPLE_RELEASE", "READY_FOR_SALE"]:
+                print(f"Version {v_str} is already submitted (state: {state})!")
                 return v
 
         print(f"Creating new App Store Version {version_string}...")
@@ -194,8 +197,17 @@ class AppStoreClient:
             "notes": notes,
             "demoAccountRequired": False
         }
+        fallback_contact = {
+            "contactFirstName": "Noah",
+            "contactLastName": "Lim",
+            "contactEmail": "noahlimjj@gmail.com",
+            "contactPhone": "+65 8000 0000"
+        }
         if detail:
             d_id = detail["id"]
+            existing = detail.get("attributes", {})
+            if not existing.get("contactEmail"):
+                payload_attrs.update(fallback_contact)
             print(f"Updating App Review Detail (ID: {d_id})...")
             payload = {
                 "data": {
@@ -208,6 +220,7 @@ class AppStoreClient:
             return res["data"]
         else:
             print("Creating App Review Detail...")
+            payload_attrs.update(fallback_contact)
             payload = {
                 "data": {
                     "type": "appStoreReviewDetails",
@@ -340,11 +353,15 @@ class AppStoreClient:
 
             # Check existing screenshots in set
             current_shots = self.request("GET", f"appScreenshotSets/{set_id}/appScreenshots").get("data", [])
-            if len(current_shots) >= len(file_list):
-                print(f"Set {display_type} already has {len(current_shots)} screenshots. Skipping re-upload.")
+            existing_names = {s["attributes"]["fileName"] for s in current_shots if "fileName" in s.get("attributes", {})}
+            if len(existing_names) >= len(file_list):
+                print(f"Set {display_type} already has {len(existing_names)} screenshots. Skipping re-upload.")
                 continue
 
             for fname in file_list:
+                if fname in existing_names:
+                    print(f"   Screenshot {fname} already in {display_type}. Skipping.")
+                    continue
                 fpath = s_dir / fname
                 if fpath.exists():
                     self.upload_screenshot_file(set_id, fpath)
@@ -472,6 +489,10 @@ def main():
     # 1. Version
     version_obj = client.get_or_create_version(app_id, version_string="1.0")
     version_id = version_obj["id"]
+    current_version_state = version_obj["attributes"].get("appStoreState")
+    if current_version_state in ["WAITING_FOR_REVIEW", "IN_REVIEW"]:
+        print(f"🎉 Version 1.0 is already in state '{current_version_state}'. No further submission action needed!")
+        return
 
     # 2. Update localization metadata
     loc_obj = client.update_localization(version_id, metadata, locale="en-US")
@@ -484,11 +505,17 @@ def main():
     client.upload_screenshots_for_loc(loc_id, "app/store/screenshots")
 
     # 5. Attach latest valid build
-    build = client.get_latest_valid_build(app_id, max_wait_seconds=300)
+    build = client.get_latest_valid_build(app_id, max_wait_seconds=900)
     if build:
         client.attach_build(version_id, build["id"])
     else:
-        print("WARNING: No valid build found to attach. You can attach it once processing completes.")
+        # Check if version already has a build attached
+        v_info = client.request("GET", f"appStoreVersions/{version_id}/build")
+        if v_info and v_info.get("data"):
+            build = v_info["data"]
+            print(f"Version already has build {build['id']} attached.")
+        else:
+            print("WARNING: No valid build found to attach. You can attach it once processing completes.")
 
     # 6. Submit for review if requested
     if mode == "submit":

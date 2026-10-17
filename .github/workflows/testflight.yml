@@ -16,6 +16,10 @@ on:
         description: 'Submit to App Store for review'
         type: boolean
         default: true
+      skip_build:
+        description: 'Skip Xcode build (use latest already uploaded build)'
+        type: boolean
+        default: false
   push:
     tags: ['ios-v*']
 
@@ -41,6 +45,7 @@ jobs:
           fi
       - uses: actions/checkout@v4
       - name: Select Xcode 26 (iOS 26 SDK)
+        if: ${{ !inputs.skip_build }}
         working-directory: .
         run: |
           echo "Installed Xcode versions:"
@@ -56,14 +61,19 @@ jobs:
           fi
           xcodebuild -version
       - uses: actions/setup-node@v4
+        if: ${{ !inputs.skip_build }}
         with:
           node-version: 22
           cache: npm
           cache-dependency-path: app/package-lock.json
-      - run: npm ci
-      - run: npm run build
-      - run: npx cap sync ios
+      - if: ${{ !inputs.skip_build }}
+        run: npm ci
+      - if: ${{ !inputs.skip_build }}
+        run: npm run build
+      - if: ${{ !inputs.skip_build }}
+        run: npx cap sync ios
       - name: Install Apple certificate and provisioning profile
+        if: ${{ !inputs.skip_build }}
         env:
           BUILD_CERTIFICATE_BASE64: ${{ secrets.BUILD_CERTIFICATE_BASE64 }}
           P12_PASSWORD: ${{ secrets.P12_PASSWORD }}
@@ -87,6 +97,7 @@ jobs:
           mkdir -p ~/Library/MobileDevice/Provisioning\ Profiles
           cp "$PP_PATH" ~/Library/MobileDevice/Provisioning\ Profiles/
       - name: API key and build number
+        if: ${{ !inputs.skip_build }}
         env:
           P: ${{ secrets.ASC_KEY_P8 }}
           K: ${{ secrets.ASC_KEY_ID }}
@@ -113,6 +124,7 @@ jobs:
           </dict></plist>
           EOF
       - name: Archive (signed with the API key)
+        if: ${{ !inputs.skip_build }}
         working-directory: app/ios/App
         env:
           K: ${{ secrets.ASC_KEY_ID }}
@@ -125,6 +137,7 @@ jobs:
             -authenticationKeyID "$K" -authenticationKeyIssuerID "$I" \
             DEVELOPMENT_TEAM=$TEAM_ID CODE_SIGN_STYLE=Automatic archive | tail -30
       - name: Upload to App Store Connect (TestFlight)
+        if: ${{ !inputs.skip_build }}
         working-directory: app/ios/App
         env:
           K: ${{ secrets.ASC_KEY_ID }}
@@ -137,13 +150,13 @@ jobs:
             -authenticationKeyID "$K" -authenticationKeyIssuerID "$I" | tail -30
           echo "Uploaded. It shows up in App Store Connect → TestFlight after processing (10–30 min)."
       - name: Configure App Store Metadata, Screenshots, and Submit
-        working-directory: .
+        working-directory: ${{ github.workspace }}
         env:
           ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
           ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
           ASC_KEY_P8: ${{ secrets.ASC_KEY_P8 }}
         run: |
-          pip3 install requests pyjwt cryptography
+          python3 -m pip install --break-system-packages requests pyjwt cryptography
           if [ "${{ github.event.inputs.submit_to_app_store }}" = "false" ]; then
             python3 tools/appstore_client.py all
           else
