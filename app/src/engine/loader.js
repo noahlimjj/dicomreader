@@ -16,7 +16,7 @@ function hash(s) {
 export class Loader {
   constructor({dictionaryUrl} = {}) {
     const cores = (typeof navigator !== 'undefined' && navigator.hardwareConcurrency) || 4;
-    const n = Math.max(1, Math.min(isMobile ? 3 : 4, cores - 1));
+    const n = Math.max(2, Math.min(isMobile ? 4 : 8, cores - 1));
     this.workers = Array.from({length: n}, (_, i) => this.makeWorker(i));
     this.queue = [];
     this.pending = new Map(); // request id -> task

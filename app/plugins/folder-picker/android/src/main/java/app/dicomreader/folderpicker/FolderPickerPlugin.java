@@ -25,6 +25,9 @@ import java.io.OutputStream;
 import java.net.HttpURLConnection;
 import java.net.URL;
 import java.net.URLDecoder;
+import java.nio.channels.Channels;
+import java.nio.channels.FileChannel;
+import java.nio.channels.ReadableByteChannel;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -32,6 +35,12 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
 
 /**
  * Lets the user pick a folder, pick files (including directly from Google Drive
@@ -219,7 +228,7 @@ public class FolderPickerPlugin extends Plugin {
             try {
                 File dest = makeBatchDir();
                 ContentResolver resolver = getContext().getContentResolver();
-                JSArray files = new JSArray();
+                List<Candidate> candidates = new ArrayList<>();
                 for (int i = 0; i < uris.size(); i++) {
                     Uri u = uris.get(i);
                     String name = "scan_" + (i + 1) + ".dcm";
@@ -234,20 +243,53 @@ public class FolderPickerPlugin extends Plugin {
                     if (shouldSkipFile(name)) continue;
                     File target = new File(dest, name);
                     if (target.exists()) target = new File(dest, (i + 1) + "_" + name);
-                    try (InputStream in = resolver.openInputStream(u); OutputStream os = new FileOutputStream(target)) {
-                        if (in == null) continue;
-                        byte[] buf = new byte[1 << 16];
-                        int n;
-                        while ((n = in.read(buf)) > 0) os.write(buf, 0, n);
-                    }
-                    long actualSize = target.length();
-                    if (actualSize > 0) size = actualSize;
-                    JSObject f = new JSObject();
-                    f.put("path", target.getAbsolutePath());
-                    f.put("name", name);
-                    f.put("size", size);
-                    files.put(f);
+                    candidates.add(new Candidate(u, target, name, name, size));
                 }
+
+                int total = candidates.size();
+                int workers = Math.min(8, Math.max(4, Runtime.getRuntime().availableProcessors() * 2));
+                ExecutorService pool = Executors.newFixedThreadPool(workers);
+                AtomicInteger copiedCount = new AtomicInteger(0);
+                AtomicLong lastProgressMillis = new AtomicLong(System.currentTimeMillis());
+
+                List<Future<JSObject>> futures = new ArrayList<>(total);
+                for (Candidate c : candidates) {
+                    futures.add(pool.submit(() -> {
+                        boolean ok = copyFileFast(resolver, c.uri, c.target);
+                        long actualSize = c.target.length();
+                        JSObject result = null;
+                        if (ok && (actualSize >= 128 || c.name.toLowerCase().endsWith(".zip"))) {
+                            JSObject f = new JSObject();
+                            f.put("path", c.target.getAbsolutePath());
+                            f.put("name", c.name);
+                            f.put("size", actualSize);
+                            result = f;
+                        } else {
+                            c.target.delete();
+                        }
+                        int done = copiedCount.incrementAndGet();
+                        long now = System.currentTimeMillis();
+                        long last = lastProgressMillis.get();
+                        if ((now - last >= 80 || done == total) && lastProgressMillis.compareAndSet(last, now)) {
+                            JSObject progress = new JSObject();
+                            progress.put("copied", done);
+                            progress.put("total", total);
+                            progress.put("name", c.name);
+                            notifyListeners("folderProgress", progress);
+                        }
+                        return result;
+                    }));
+                }
+
+                pool.shutdown();
+                pool.awaitTermination(10, TimeUnit.MINUTES);
+
+                JSArray files = new JSArray();
+                for (Future<JSObject> fut : futures) {
+                    JSObject res = fut.get();
+                    if (res != null) files.put(res);
+                }
+
                 JSObject r = new JSObject();
                 r.put("files", files);
                 r.put("batchDir", dest.getAbsolutePath());
@@ -280,9 +322,83 @@ public class FolderPickerPlugin extends Plugin {
                 int slash = folderName.lastIndexOf('/');
                 if (slash >= 0) folderName = folderName.substring(slash + 1);
                 if (folderName.isEmpty()) folderName = "folder";
+
+                List<Candidate> candidates = new ArrayList<>();
+                collectChildren(tree, rootId, "", dest, folderName, candidates);
+
+                int total = candidates.size();
+                if (total == 0) {
+                    JSObject r = new JSObject();
+                    r.put("files", new JSArray());
+                    r.put("folder", folderName);
+                    r.put("batchDir", dest.getAbsolutePath());
+                    call.resolve(r);
+                    return;
+                }
+
+                // 1. Batch pre-create all unique parent directories
+                Set<File> createdDirs = new HashSet<>();
+                for (Candidate c : candidates) {
+                    File p = c.target.getParentFile();
+                    if (p != null && !createdDirs.contains(p)) {
+                        createdDirs.add(p);
+                        if (!p.exists()) p.mkdirs();
+                    }
+                }
+
+                JSObject initialProgress = new JSObject();
+                initialProgress.put("copied", 0);
+                initialProgress.put("total", total);
+                initialProgress.put("name", "Starting fast transfer...");
+                notifyListeners("folderProgress", initialProgress);
+
+                // 2. High-speed parallel concurrent copying
+                int workers = Math.min(8, Math.max(4, Runtime.getRuntime().availableProcessors() * 2));
+                ExecutorService pool = Executors.newFixedThreadPool(workers);
+                AtomicInteger copiedCount = new AtomicInteger(0);
+                AtomicLong lastProgressMillis = new AtomicLong(System.currentTimeMillis());
+
+                List<Future<JSObject>> futures = new ArrayList<>(total);
+                ContentResolver resolver = getContext().getContentResolver();
+
+                for (Candidate c : candidates) {
+                    futures.add(pool.submit(() -> {
+                        boolean ok = copyFileFast(resolver, c.uri, c.target);
+                        long actualSize = c.target.length();
+                        JSObject result = null;
+                        if (ok && (actualSize >= 128 || c.name.toLowerCase().endsWith(".zip"))) {
+                            JSObject f = new JSObject();
+                            f.put("path", c.target.getAbsolutePath());
+                            f.put("name", c.relative);
+                            f.put("size", actualSize);
+                            result = f;
+                        } else {
+                            c.target.delete();
+                        }
+
+                        int done = copiedCount.incrementAndGet();
+                        long now = System.currentTimeMillis();
+                        long last = lastProgressMillis.get();
+                        if ((now - last >= 80 || done == total) && lastProgressMillis.compareAndSet(last, now)) {
+                            JSObject progress = new JSObject();
+                            progress.put("copied", done);
+                            progress.put("total", total);
+                            progress.put("name", c.name);
+                            notifyListeners("folderProgress", progress);
+                        }
+                        return result;
+                    }));
+                }
+
+                pool.shutdown();
+                pool.awaitTermination(10, TimeUnit.MINUTES);
+
                 JSArray files = new JSArray();
-                int[] counter = new int[]{0};
-                copyChildren(tree, rootId, "", dest, files, folderName, counter);
+                for (Future<JSObject> fut : futures) {
+                    JSObject res = fut.get();
+                    if (res != null) files.put(res);
+                }
+
                 JSObject r = new JSObject();
                 r.put("files", files);
                 r.put("folder", folderName);
@@ -301,7 +417,45 @@ public class FolderPickerPlugin extends Plugin {
         return dest;
     }
 
-    private void copyChildren(Uri tree, String parentId, String relative, File dest, JSArray out, String folderName, int[] counter) throws Exception {
+    static class Candidate {
+        final Uri uri;
+        final File target;
+        final String relative;
+        final String name;
+        final long size;
+
+        Candidate(Uri uri, File target, String relative, String name, long size) {
+            this.uri = uri;
+            this.target = target;
+            this.relative = relative;
+            this.name = name;
+            this.size = size;
+        }
+    }
+
+    private static boolean copyFileFast(ContentResolver resolver, Uri uri, File target) {
+        try (InputStream in = resolver.openInputStream(uri);
+             FileOutputStream fos = new FileOutputStream(target)) {
+            if (in == null) return false;
+            try (ReadableByteChannel src = Channels.newChannel(in);
+                 FileChannel dst = fos.getChannel()) {
+                long transferred = 0;
+                long count;
+                while ((count = dst.transferFrom(src, transferred, 256 * 1024)) > 0) {
+                    transferred += count;
+                }
+                if (transferred > 0) return true;
+            }
+            byte[] buf = new byte[256 * 1024];
+            int n;
+            while ((n = in.read(buf)) > 0) fos.write(buf, 0, n);
+            return true;
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    private void collectChildren(Uri tree, String parentId, String relative, File dest, String folderName, List<Candidate> candidates) {
         ContentResolver resolver = getContext().getContentResolver();
         Uri children = DocumentsContract.buildChildDocumentsUriUsingTree(tree, parentId);
         String[] columns = {
@@ -320,41 +474,16 @@ public class FolderPickerPlugin extends Plugin {
                 if (name == null || name.startsWith(".") || "__macosx".equalsIgnoreCase(name)) continue;
                 String rel = relative.isEmpty() ? name : relative + "/" + name;
                 if (DocumentsContract.Document.MIME_TYPE_DIR.equals(mime)) {
-                    copyChildren(tree, id, rel, dest, out, folderName, counter);
+                    collectChildren(tree, id, rel, dest, folderName, candidates);
                     continue;
                 }
                 if (shouldSkipFile(name)) continue;
                 if (size > 0 && size < 128 && !name.toLowerCase().endsWith(".zip")) continue;
                 File target = new File(dest, rel);
-                File parent = target.getParentFile();
-                if (parent != null && !parent.exists()) parent.mkdirs();
                 Uri doc = DocumentsContract.buildDocumentUriUsingTree(tree, id);
-                try (InputStream in = resolver.openInputStream(doc); OutputStream os = new FileOutputStream(target)) {
-                    if (in == null) continue;
-                    byte[] buf = new byte[1 << 16];
-                    int n;
-                    while ((n = in.read(buf)) > 0) os.write(buf, 0, n);
-                }
-                long actualSize = target.length();
-                if (actualSize > 0) size = actualSize;
-                if (size < 128 && !name.toLowerCase().endsWith(".zip")) {
-                    target.delete();
-                    continue;
-                }
-                JSObject f = new JSObject();
-                f.put("path", target.getAbsolutePath());
-                f.put("name", folderName + "/" + rel);
-                f.put("size", size);
-                out.put(f);
-                counter[0]++;
-                if (counter[0] % 5 == 0) {
-                    JSObject progress = new JSObject();
-                    progress.put("copied", counter[0]);
-                    progress.put("name", name);
-                    notifyListeners("folderProgress", progress);
-                }
+                candidates.add(new Candidate(doc, target, folderName + "/" + rel, name, size));
             }
-        }
+        } catch (Exception ignored) {}
     }
 
 

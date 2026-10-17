@@ -2,6 +2,7 @@ import Foundation
 import Capacitor
 import UIKit
 import UniformTypeIdentifiers
+import Darwin
 
 /// Lets the user pick a folder or files (including from Google Drive / iCloud Drive
 /// in the iOS Files sheet), or download a shared Google Drive / direct link.
@@ -136,6 +137,39 @@ public class FolderPickerPlugin: CAPPlugin, CAPBridgedPlugin, UIDocumentPickerDe
         return dest
     }
 
+    private static func fastCopy(from: URL, to: URL) -> Bool {
+        let fromPath = from.path
+        let toPath = to.path
+        
+        unlink(toPath)
+        
+        // 1. Try APFS clonefile (copy-on-write clone: near 0ms, zero physical flash I/O)
+        if copyfile(fromPath, toPath, nil, copyfile_flags_t(COPYFILE_CLONE | COPYFILE_NOFOLLOW_SRC)) == 0 {
+            return true
+        }
+        
+        // 2. Try fast kernel copyfile
+        if copyfile(fromPath, toPath, nil, copyfile_flags_t(COPYFILE_ALL | COPYFILE_NOFOLLOW_SRC)) == 0 {
+            return true
+        }
+        
+        // 3. Fallback to FileManager copyItem
+        do {
+            try FileManager.default.copyItem(at: from, to: to)
+            return true
+        } catch {
+            return false
+        }
+    }
+
+    private static func fileSize(at path: String) -> Int {
+        var st = stat()
+        if stat(path, &st) == 0 {
+            return Int(st.st_size)
+        }
+        return 0
+    }
+
     private func copyPickedItems(_ urls: [URL]) throws -> ([[String: Any]], String) {
         let fm = FileManager.default
         let dest = try makeBatchDir()
@@ -143,9 +177,21 @@ public class FolderPickerPlugin: CAPPlugin, CAPBridgedPlugin, UIDocumentPickerDe
         var lastError: Error?
         let keys: [URLResourceKey] = [.isDirectoryKey, .fileSizeKey]
 
+        var activeScopedUrls: [URL] = []
         for itemUrl in urls {
-            let scoped = itemUrl.startAccessingSecurityScopedResource()
-            defer { if scoped { itemUrl.stopAccessingSecurityScopedResource() } }
+            if itemUrl.startAccessingSecurityScopedResource() {
+                activeScopedUrls.append(itemUrl)
+            }
+        }
+        defer {
+            for scopedUrl in activeScopedUrls {
+                scopedUrl.stopAccessingSecurityScopedResource()
+            }
+        }
+
+        var candidates: [(file: URL, target: URL, relative: String, fileName: String)] = []
+
+        for itemUrl in urls {
             var coordinationError: NSError?
             NSFileCoordinator().coordinate(readingItemAt: itemUrl, options: [.withoutChanges], error: &coordinationError) { url in
                 var isDir: ObjCBool = false
@@ -154,7 +200,6 @@ public class FolderPickerPlugin: CAPPlugin, CAPBridgedPlugin, UIDocumentPickerDe
                     let folderName = url.lastPathComponent.isEmpty ? "folder" : url.lastPathComponent
                     guard let items = fm.enumerator(at: url, includingPropertiesForKeys: keys, options: [.skipsHiddenFiles]) else { return }
                     
-                    var candidates: [(file: URL, target: URL, relative: String, fileName: String)] = []
                     var index = 0
                     for case let file as URL in items {
                         let fileName = file.lastPathComponent
@@ -173,54 +218,80 @@ public class FolderPickerPlugin: CAPPlugin, CAPBridgedPlugin, UIDocumentPickerDe
                         let target = dest.appendingPathComponent(folderName).appendingPathComponent(relative)
                         candidates.append((file, target, folderName + "/" + relative, fileName))
                     }
-
-                    let total = candidates.count
-                    self.notifyListeners("folderProgress", data: ["copied": 0, "total": total, "name": "Scanning folder..."])
-
-                    for (i, c) in candidates.enumerated() {
-                        do {
-                            try fm.createDirectory(at: c.target.deletingLastPathComponent(), withIntermediateDirectories: true)
-                            if fm.fileExists(atPath: c.target.path) {
-                                try? fm.removeItem(at: c.target)
-                            }
-                            try fm.copyItem(at: c.file, to: c.target)
-                            let attr = try? fm.attributesOfItem(atPath: c.target.path)
-                            let size = (attr?[.size] as? NSNumber)?.intValue ?? 0
-                            if size >= 128 || c.fileName.lowercased().hasSuffix(".zip") {
-                                out.append(["path": c.target.path, "name": c.relative, "size": size])
-                            } else {
-                                try? fm.removeItem(at: c.target)
-                            }
-                        } catch {
-                            lastError = error
-                        }
-                        if (i + 1) % 5 == 0 || (i + 1) == total {
-                            self.notifyListeners("folderProgress", data: [
-                                "copied": i + 1,
-                                "total": total,
-                                "name": c.fileName
-                            ])
-                        }
-                    }
                 } else {
                     let name = url.lastPathComponent.isEmpty ? "scan.dcm" : url.lastPathComponent
-                    if Self.shouldSkipFile(name: name) { return }
-                    var target = dest.appendingPathComponent(name)
-                    if fm.fileExists(atPath: target.path) {
-                        target = dest.appendingPathComponent(UUID().uuidString + "_" + name)
-                    }
-                    do {
-                        try fm.copyItem(at: url, to: target)
-                        let attr = try? fm.attributesOfItem(atPath: target.path)
-                        let size = (attr?[.size] as? NSNumber)?.intValue ?? 0
-                        out.append(["path": target.path, "name": name, "size": size])
-                    } catch {
-                        lastError = error
+                    if !Self.shouldSkipFile(name: name) {
+                        let target = dest.appendingPathComponent(UUID().uuidString + "_" + name)
+                        candidates.append((url, target, name, name))
                     }
                 }
             }
             if let error = coordinationError { lastError = error }
         }
+
+        let total = candidates.count
+        if total == 0 {
+            if let error = lastError { throw error }
+            return ([], dest.path)
+        }
+
+        // 1. Batch pre-create all unique directories upfront (eliminates hundreds of directory creation syscalls)
+        var createdDirs = Set<String>()
+        for c in candidates {
+            let dir = c.target.deletingLastPathComponent().path
+            if !createdDirs.contains(dir) {
+                createdDirs.insert(dir)
+                try? fm.createDirectory(atPath: dir, withIntermediateDirectories: true, attributes: nil)
+            }
+        }
+
+        self.notifyListeners("folderProgress", data: ["copied": 0, "total": total, "name": "Starting fast transfer..."])
+
+        // 2. High-speed parallel concurrent copying across CPU cores
+        let queue = OperationQueue()
+        queue.maxConcurrentOperationCount = 8
+        queue.qualityOfService = .userInitiated
+
+        let lock = NSLock()
+        var processedCount = 0
+        var lastProgressNano = DispatchTime.now().uptimeNanoseconds
+
+        for c in candidates {
+            queue.addOperation {
+                let success = Self.fastCopy(from: c.file, to: c.target)
+                if success {
+                    let size = Self.fileSize(at: c.target.path)
+                    if size >= 128 || c.fileName.lowercased().hasSuffix(".zip") {
+                        lock.lock()
+                        out.append(["path": c.target.path, "name": c.relative, "size": size])
+                        lock.unlock()
+                    } else {
+                        unlink(c.target.path)
+                    }
+                }
+
+                lock.lock()
+                processedCount += 1
+                let current = processedCount
+                let nowNano = DispatchTime.now().uptimeNanoseconds
+                let elapsed = nowNano > lastProgressNano ? (nowNano - lastProgressNano) : 0
+                let shouldNotify = elapsed >= 80_000_000 || current == total // throttle UI bridge updates to ~12fps
+                if shouldNotify {
+                    lastProgressNano = nowNano
+                }
+                lock.unlock()
+
+                if shouldNotify {
+                    self.notifyListeners("folderProgress", data: [
+                        "copied": current,
+                        "total": total,
+                        "name": c.fileName
+                    ])
+                }
+            }
+        }
+        queue.waitUntilAllOperationsAreFinished()
+
         if out.isEmpty, let error = lastError { throw error }
         return (out, dest.path)
     }
