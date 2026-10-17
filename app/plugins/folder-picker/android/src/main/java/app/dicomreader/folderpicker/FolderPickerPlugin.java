@@ -99,6 +99,15 @@ public class FolderPickerPlugin extends Plugin {
     }
 
     @PluginMethod
+    public void getStudiesDir(PluginCall call) {
+        File base = new File(getContext().getFilesDir(), "studies");
+        if (!base.exists()) base.mkdirs();
+        JSObject r = new JSObject();
+        r.put("path", base.getAbsolutePath());
+        call.resolve(r);
+    }
+
+    @PluginMethod
     public void downloadUrl(PluginCall call) {
         String urlStr = call.getString("url");
         String suggestedName = call.getString("filename", "");

@@ -4,7 +4,7 @@
 // so reopening a saved study takes < 5 ms with zero re-indexing.
 import {Capacitor} from '@capacitor/core';
 import {makeItems, groupSeries} from './study.js';
-import {isNative, deleteNativePaths} from '../ui/native.js';
+import {isNative, deleteNativePaths, getNativeStudiesDir} from '../ui/native.js';
 
 const DB_NAME = 'dicomReaderLibrary';
 const DB_VERSION = 1;
@@ -12,6 +12,9 @@ const DB_VERSION = 1;
 let dbPromise = null;
 
 function openDb() {
+  if (typeof navigator !== 'undefined' && navigator.storage?.persist) {
+    navigator.storage.persist().catch(() => {});
+  }
   if (dbPromise) return dbPromise;
   dbPromise = new Promise((resolve, reject) => {
     if (typeof indexedDB === 'undefined') {
@@ -47,6 +50,33 @@ function reqResult(req) {
     req.onsuccess = () => resolve(req.result);
     req.onerror = () => reject(req.error);
   });
+}
+
+/**
+ * Resolves a stored native file or directory path against the current native studies directory.
+ * On iOS, app updates change the sandbox UUID
+ * (/var/mobile/Containers/Data/Application/<UUID>/Library/Application Support/studies/...).
+ * Re-anchoring the relative subpath against the living Application Support directory ensures
+ * saved studies open reliably and permanently across app updates and device restores.
+ */
+export async function resolveNativeFilePath(nativePath, relPath) {
+  if (!nativePath && !relPath) return null;
+  if (!isNative) return nativePath || relPath;
+  const currentBase = await getNativeStudiesDir();
+  if (!currentBase) return nativePath || relPath;
+
+  if (relPath) {
+    const cleanRel = relPath.startsWith('studies/') ? relPath.slice('studies/'.length) : relPath;
+    return `${currentBase}/${cleanRel}`;
+  }
+
+  const idx = nativePath.indexOf('/studies/');
+  if (idx !== -1) {
+    const sub = nativePath.slice(idx + '/studies/'.length);
+    return `${currentBase}/${sub}`;
+  }
+
+  return nativePath;
 }
 
 /** Compute a stable ID for a loaded study. */
@@ -98,12 +128,17 @@ export async function saveStudyToLibrary(series, indexedEntries, measurements = 
 
   for (const {entry, meta} of indexedEntries) {
     if (!meta) continue;
+    let relPath = null;
+    if (entry.nativePath && entry.nativePath.includes('/studies/')) {
+      relPath = entry.nativePath.slice(entry.nativePath.indexOf('/studies/') + '/studies/'.length);
+    }
     const rec = {
       key: entry.key,
       name: entry.name,
       size: entry.size || 0,
       meta,
       nativePath: entry.nativePath || null,
+      relPath,
     };
     records.push(rec);
     // If not backed by a persistent native file on iOS/Android, persist the binary blob in IndexedDB
@@ -186,7 +221,8 @@ export async function loadSavedStudy(studyId) {
       cheap: true,
       getSource: async () => {
         if (r.nativePath && isNative) {
-          return {url: Capacitor.convertFileSrc(`file://${r.nativePath}`), size: r.size};
+          const resolvedPath = await resolveNativeFilePath(r.nativePath, r.relPath);
+          return {url: Capacitor.convertFileSrc(`file://${resolvedPath}`), size: r.size};
         }
         const btx = db.transaction('blobs', 'readonly');
         const bdoc = await reqResult(btx.objectStore('blobs').get(`${studyId}|${r.key}`));
@@ -219,6 +255,11 @@ export async function deleteSavedStudy(studyId) {
   }
   await txDone(tx);
   if (doc?.batchDirs?.length) {
-    await deleteNativePaths(doc.batchDirs);
+    const resolvedBatchDirs = [];
+    for (const b of doc.batchDirs) {
+      const resolved = await resolveNativeFilePath(b);
+      if (resolved) resolvedBatchDirs.push(resolved);
+    }
+    await deleteNativePaths(resolvedBatchDirs);
   }
 }

@@ -15,7 +15,8 @@ public class FolderPickerPlugin: CAPPlugin, CAPBridgedPlugin, UIDocumentPickerDe
         CAPPluginMethod(name: "pickFolder", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "pickFiles", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "downloadUrl", returnType: CAPPluginReturnPromise),
-        CAPPluginMethod(name: "deletePaths", returnType: CAPPluginReturnPromise)
+        CAPPluginMethod(name: "deletePaths", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "getStudiesDir", returnType: CAPPluginReturnPromise)
     ]
 
     private var pendingCall: CAPPluginCall?
@@ -65,6 +66,18 @@ public class FolderPickerPlugin: CAPPlugin, CAPBridgedPlugin, UIDocumentPickerDe
                 try? fm.removeItem(atPath: p)
             }
             call.resolve()
+        }
+    }
+
+    @objc func getStudiesDir(_ call: CAPPluginCall) {
+        do {
+            let fm = FileManager.default
+            let appSupport = try fm.url(for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: true)
+            let base = appSupport.appendingPathComponent("studies", isDirectory: true)
+            try fm.createDirectory(at: base, withIntermediateDirectories: true)
+            call.resolve(["path": base.path])
+        } catch {
+            call.reject("Could not get studies directory: \(error.localizedDescription)")
         }
     }
 

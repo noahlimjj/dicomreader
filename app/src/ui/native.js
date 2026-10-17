@@ -176,5 +176,23 @@ export async function onNativeProgress(callback) {
   }
 }
 
+let cachedStudiesDir = null;
+
+/** Get the persistent studies directory on the current native platform. */
+export async function getNativeStudiesDir() {
+  if (!isNative) return null;
+  if (cachedStudiesDir) return cachedStudiesDir;
+  try {
+    const {registerPlugin} = await import('@capacitor/core');
+    const FolderPicker = registerPlugin('FolderPicker');
+    const res = await FolderPicker.getStudiesDir();
+    if (res?.path) cachedStudiesDir = res.path;
+    return cachedStudiesDir;
+  } catch (e) {
+    console.warn('Could not get native studies dir', e);
+    return null;
+  }
+}
+
 
 
