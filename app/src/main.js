@@ -138,6 +138,7 @@ async function openEntries(entries, label = '') {
   if (label !== 'sample') {
     saveStudyToLibrary(series, indexed, state.measurements).then((id) => {
       state.activeStudyId = id;
+      toast('Study saved to library');
     }).catch((e) => console.warn('Could not save to library', e));
   }
 }
@@ -1282,9 +1283,10 @@ function applyPreset(p, v = activeVp()) {
   else v.setVoi(p);
 }
 
-function moreMenu(anchor) {
+async function moreMenu(anchor) {
   const v = activeVp();
   const loaded = !!v.series;
+  const saved = await listSavedStudies();
   openMenu(anchor, [
     {label: 'Two views (reference lines)', icon: 'layout', on: state.layout === 2, disabled: !loaded, key: 'V', action: () => setLayout(state.layout === 2 ? 1 : 2)},
     ...(state.layout === 2 ? [
@@ -1309,6 +1311,7 @@ function moreMenu(anchor) {
     {label: 'Open files or a ZIP', icon: 'open', action: pickFiles},
     {label: 'Choose from Google Drive', icon: 'drive', action: openGoogleDrive},
     ...(canPickFolder ? [{label: 'Open a folder', icon: 'open', action: pickFolder}] : []),
+    ...(saved.length ? [{label: `Saved studies (${saved.length})`, icon: 'list', action: () => openSheet('saved')}] : []),
     {label: 'Close scans', icon: 'close', disabled: !state.series.length, action: closeStudy},
     {label: 'Help & about', icon: 'help', key: '?', action: () => openSheet('help')},
   ]);
@@ -2180,6 +2183,7 @@ onNativeProgress((p) => {
   }
 });
 $('openFolderBig').hidden = !canPickFolder;
+renderSavedStudies();
 
 // handy for debugging and for the end-to-end tests
 window.dicomReader = {state, vps, loader, openFiles, openSample, openGoogleDrive, openGoogleDriveLink, setTool, setLayout, showSeries, activeVp};
