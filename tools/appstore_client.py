@@ -299,11 +299,40 @@ class AppStoreClient:
                         print(f"✓ Privacy policy URL set to {privacy_url}")
                     except Exception as e:
                         print(f"Privacy URL note: {e}")
+
+                # Configure ageRatingDeclaration linked to this appInfo
+                try:
+                    decl = self.request("GET", f"appInfos/{info_id}/ageRatingDeclaration")
+                    if decl and decl.get("data"):
+                        decl_id = decl["data"]["id"]
+                        attrs = decl["data"].get("attributes", {})
+                        for k in list(attrs.keys()):
+                            if k == "kidsAgeBand":
+                                continue
+                            elif isinstance(attrs[k], bool):
+                                attrs[k] = False
+                            elif isinstance(attrs[k], str) or attrs[k] is None:
+                                if k in ["unrestrictedWebAccess", "gambling", "parentalControls", "userGeneratedContent", "advertising", "lootBox", "healthOrWellnessTopics"]:
+                                    attrs[k] = False
+                                else:
+                                    attrs[k] = "NONE"
+                        attrs.pop("seventeenPlus", None)
+                        patch_payload = {
+                            "data": {
+                                "type": "ageRatingDeclarations",
+                                "id": decl_id,
+                                "attributes": attrs
+                            }
+                        }
+                        self.request("PATCH", f"ageRatingDeclarations/{decl_id}", data=patch_payload)
+                        print(f"✓ Age rating declaration updated (ID: {decl_id})")
+                except Exception as e:
+                    print(f"Age rating via appInfo note: {e}")
         except Exception as e:
             print(f"AppInfos note: {e}")
 
     def update_version_details(self, version_id, copyright_text="2026 Noah Lim"):
-        print("\nConfiguring Version Details & Age Rating...")
+        print("\nConfiguring Version Details...")
         # Copyright on appStoreVersions
         try:
             payload = {
@@ -319,34 +348,6 @@ class AppStoreClient:
             print(f"✓ Version copyright set to '{copyright_text}'")
         except Exception as e:
             print(f"Version copyright note: {e}")
-
-        # Age rating on ageRatingDeclarations/{version_id}
-        try:
-            curr = self.request("GET", f"ageRatingDeclarations/{version_id}")
-            if curr and curr.get("data"):
-                attrs = curr["data"].get("attributes", {})
-                for k in list(attrs.keys()):
-                    if k == "kidsAgeBand":
-                        continue
-                    elif isinstance(attrs[k], bool):
-                        attrs[k] = False
-                    elif isinstance(attrs[k], str) or attrs[k] is None:
-                        if k in ["unrestrictedWebAccess", "gambling", "parentalControls", "userGeneratedContent"]:
-                            attrs[k] = False
-                        else:
-                            attrs[k] = "NONE"
-                attrs.pop("seventeenPlus", None)
-                age_payload = {
-                    "data": {
-                        "type": "ageRatingDeclarations",
-                        "id": version_id,
-                        "attributes": attrs
-                    }
-                }
-                self.request("PATCH", f"ageRatingDeclarations/{version_id}", data=age_payload)
-                print("✓ Age rating declaration updated (all NONE/False)")
-        except Exception as e:
-            print(f"Age rating update note: {e}")
 
     def ensure_free_pricing(self, app_id):
         print("\nConfiguring App Free Pricing...")
