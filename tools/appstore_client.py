@@ -318,7 +318,7 @@ class AppStoreClient:
             return
 
         display_mappings = {
-            "APP_IPHONE_69": ["iphone-6.9-1-start.png", "iphone-6.9-2-measure.png", "iphone-6.9-3-two-views.png", "iphone-6.9-4-coronal.png", "iphone-6.9-5-series.png"],
+            "APP_IPHONE_67": ["iphone-6.9-1-start.png", "iphone-6.9-2-measure.png", "iphone-6.9-3-two-views.png", "iphone-6.9-4-coronal.png", "iphone-6.9-5-series.png"],
             "APP_IPHONE_65": ["iphone-6.5-1-start.png", "iphone-6.5-2-measure.png", "iphone-6.5-3-two-views.png", "iphone-6.5-4-coronal.png", "iphone-6.5-5-series.png"],
             "APP_IPAD_PRO_3GEN_129": ["ipad-13-1-start.png", "ipad-13-2-measure.png", "ipad-13-3-two-views.png", "ipad-13-4-coronal.png", "ipad-13-5-series.png"]
         }
