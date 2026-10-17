@@ -161,29 +161,39 @@ async function openSavedStudy(id) {
   }
 }
 
-async function renderSavedStudies() {
-  const box = $('savedStudies');
+let cachedSavedStudies = [];
+let savedStudiesSearchQuery = '';
+
+function renderSavedListItems() {
   const list = $('savedList');
-  if (!box || !list) return;
-  const studies = await listSavedStudies();
-  if (!studies.length) {
-    box.hidden = true;
-    list.innerHTML = '';
+  if (!list) return;
+  const q = (savedStudiesSearchQuery || '').trim().toLowerCase();
+  const filtered = q
+    ? cachedSavedStudies.filter((s) => {
+        const text = [s.patientName, s.patientId, s.studyDesc, ...(s.modalities || []), s.studyDate].filter(Boolean).join(' ').toLowerCase();
+        return text.includes(q);
+      })
+    : cachedSavedStudies;
+
+  if (!filtered.length) {
+    list.innerHTML = `<div class="saved-empty-search muted">No studies match "${escapeHtml(q)}"</div>`;
     return;
   }
-  box.hidden = false;
-  $('savedCount').textContent = String(studies.length);
-  list.innerHTML = studies.map((s) => {
+
+  list.innerHTML = filtered.map((s) => {
     const name = state.anonymize ? 'ANONYMOUS' : escapeHtml(s.patientName || 'Unnamed patient');
-    const mods = (s.modalities || []).map((m) => `<span class="badge">${escapeHtml(m)}</span>`).join('');
+    const mods = (s.modalities || []).map((m) => `<span class="badge mod-${escapeHtml(m)}">${escapeHtml(m)}</span>`).join('');
     const date = formatDate(s.studyDate);
-    const sub = [date, `${s.seriesCount} series`, `${s.imageCount} images`].filter(Boolean).join(' · ');
+    const desc = s.studyDesc ? `<div class="saved-desc">${escapeHtml(s.studyDesc)}</div>` : '';
+    const subParts = [date, `${s.seriesCount} series`, `${s.imageCount} images`].filter(Boolean);
+    const sub = subParts.join(' · ');
     const thumb = s.thumb ? `<img class="saved-thumb" src="${s.thumb}" alt="">` : `<div class="saved-thumb">${escapeHtml(s.modalities?.[0] || 'DCM')}</div>`;
     return `
       <div class="saved-card" data-id="${escapeHtml(s.id)}">
         ${thumb}
         <div class="saved-meta">
-          <div class="saved-title">${mods} ${name}</div>
+          <div class="saved-title"><span class="saved-mods">${mods}</span> <span class="saved-patient">${name}</span></div>
+          ${desc}
           <div class="saved-sub">${escapeHtml(sub)}</div>
         </div>
         <button class="saved-del" title="Delete from saved studies" aria-label="Delete" data-del="${escapeHtml(s.id)}">
@@ -208,6 +218,21 @@ async function renderSavedStudies() {
       toast('Study deleted from library.');
     });
   }
+}
+
+async function renderSavedStudies() {
+  const box = $('savedStudies');
+  const list = $('savedList');
+  if (!box || !list) return;
+  cachedSavedStudies = await listSavedStudies();
+  if (!cachedSavedStudies.length) {
+    box.hidden = true;
+    list.innerHTML = '';
+    return;
+  }
+  box.hidden = false;
+  $('savedCount').textContent = String(cachedSavedStudies.length);
+  renderSavedListItems();
 }
 
 async function openFiles(files) {
@@ -2142,6 +2167,10 @@ function bindUi() {
     closeStudy();
   });
   $('emptyLogo')?.addEventListener('click', () => renderSavedStudies());
+  $('savedSearch')?.addEventListener('input', (e) => {
+    savedStudiesSearchQuery = e.target.value;
+    renderSavedListItems();
+  });
   $('measureMenuBtn').addEventListener('click', (e) => measureMenu(e.currentTarget));
   $('presetBtn').addEventListener('click', (e) => presetsMenu(e.currentTarget));
   $('playBtn').addEventListener('click', () => activeVp().togglePlay());
