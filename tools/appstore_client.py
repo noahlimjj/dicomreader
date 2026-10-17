@@ -367,21 +367,24 @@ class AppStoreClient:
     def ensure_free_pricing(self, app_id):
         print("\nConfiguring App Free Pricing...")
         try:
-            sched = self.request("GET", f"apps/{app_id}/appPriceSchedule")
-            if sched and sched.get("data"):
-                print("App price schedule already configured.")
+            sched = self.request("GET", f"apps/{app_id}/appPriceSchedule?include=manualPrices,baseTerritory")
+            included = sched.get("included", []) if sched else []
+            has_manual_prices = any(item.get("type") == "appPrices" for item in included)
+            if has_manual_prices:
+                print("App price schedule already configured with active prices.")
                 return
         except Exception as e:
             print(f"Price schedule check: {e}")
 
         try:
-            pts = self.request("GET", f"apps/{app_id}/pricePoints")
+            pts = self.request("GET", f"apps/{app_id}/appPricePoints?filter[territory]=USA&fields[appPricePoints]=customerPrice,territory&limit=200")
             data_pts = pts.get("data", []) if pts else []
-            free_pt = next((p for p in data_pts if p.get("attributes", {}).get("customerPrice") in ["0", "0.0", "0.00", None]), None)
+            free_pt = next((p for p in data_pts if p.get("attributes", {}).get("customerPrice") in ["0", "0.0", "0.00"]), None)
             if not free_pt and data_pts:
                 free_pt = data_pts[0]
             if free_pt:
                 pt_id = free_pt["id"]
+                temp_id = "${price-1}"
                 payload = {
                     "data": {
                         "type": "appPriceSchedules",
@@ -402,25 +405,34 @@ class AppStoreClient:
                                 "data": [
                                     {
                                         "type": "appPrices",
-                                        "attributes": {
-                                            "startDate": None
-                                        },
-                                        "relationships": {
-                                            "appPricePoint": {
-                                                "data": {
-                                                    "type": "appPricePoints",
-                                                    "id": pt_id
-                                                }
-                                            }
-                                        }
+                                        "id": temp_id
                                     }
                                 ]
                             }
                         }
-                    }
+                    },
+                    "included": [
+                        {
+                            "type": "appPrices",
+                            "id": temp_id,
+                            "attributes": {
+                                "startDate": None
+                            },
+                            "relationships": {
+                                "appPricePoint": {
+                                    "data": {
+                                        "type": "appPricePoints",
+                                        "id": pt_id
+                                    }
+                                }
+                            }
+                        }
+                    ]
                 }
                 self.request("POST", "appPriceSchedules", data=payload)
-                print("✓ Set pricing schedule to Free")
+                print(f"✓ Set pricing schedule to Free with price point {pt_id}")
+            else:
+                print(f"Could not find free price point in {len(data_pts)} points")
         except Exception as e:
             print(f"Pricing schedule note: {e}")
 
