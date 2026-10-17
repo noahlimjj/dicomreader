@@ -306,17 +306,28 @@ class AppStoreClient:
                     if decl and decl.get("data"):
                         decl_id = decl["data"]["id"]
                         attrs = decl["data"].get("attributes", {})
+                        string_enum_attrs = {
+                            "alcoholTobaccoOrDrugUseOrReferences",
+                            "contests",
+                            "gamblingSimulated",
+                            "gunsOrOtherWeapons",
+                            "horrorOrFearThemes",
+                            "matureOrSuggestiveThemes",
+                            "medicalOrTreatmentInformation",
+                            "profanityOrCrudeHumor",
+                            "sexualContentGraphicAndNudity",
+                            "sexualContentOrNudity",
+                            "violenceCartoonOrFantasy",
+                            "violenceRealistic",
+                            "violenceRealisticProlongedGraphicOrSadistic",
+                        }
                         for k in list(attrs.keys()):
-                            if k == "kidsAgeBand":
-                                continue
-                            elif isinstance(attrs[k], bool):
+                            if k in ["kidsAgeBand", "seventeenPlus"]:
+                                attrs.pop(k, None)
+                            elif k in string_enum_attrs:
+                                attrs[k] = "NONE"
+                            else:
                                 attrs[k] = False
-                            elif isinstance(attrs[k], str) or attrs[k] is None:
-                                if k in ["unrestrictedWebAccess", "gambling", "parentalControls", "userGeneratedContent", "advertising", "lootBox", "healthOrWellnessTopics"]:
-                                    attrs[k] = False
-                                else:
-                                    attrs[k] = "NONE"
-                        attrs.pop("seventeenPlus", None)
                         patch_payload = {
                             "data": {
                                 "type": "ageRatingDeclarations",
