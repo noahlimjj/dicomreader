@@ -17,10 +17,64 @@ public class FolderPickerPlugin: CAPPlugin, CAPBridgedPlugin, UIDocumentPickerDe
         CAPPluginMethod(name: "pickFiles", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "downloadUrl", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "deletePaths", returnType: CAPPluginReturnPromise),
-        CAPPluginMethod(name: "getStudiesDir", returnType: CAPPluginReturnPromise)
+        CAPPluginMethod(name: "getStudiesDir", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "startBackgroundTask", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "endBackgroundTask", returnType: CAPPluginReturnPromise)
     ]
 
     private var pendingCall: CAPPluginCall?
+    private var activeTasks: [String: UIBackgroundTaskIdentifier] = [:]
+    private let taskLock = NSLock()
+
+    deinit {
+        taskLock.lock()
+        for (_, bgId) in activeTasks where bgId != .invalid {
+            UIApplication.shared.endBackgroundTask(bgId)
+        }
+        activeTasks.removeAll()
+        taskLock.unlock()
+    }
+
+    @discardableResult
+    private func beginNativeTask(name: String) -> String {
+        let taskId = UUID().uuidString
+        var bgId: UIBackgroundTaskIdentifier = .invalid
+        bgId = UIApplication.shared.beginBackgroundTask(withName: name) { [weak self] in
+            guard let self = self else { return }
+            self.taskLock.lock()
+            let expiredId = self.activeTasks.removeValue(forKey: taskId)
+            self.taskLock.unlock()
+            if let expiredId = expiredId, expiredId != .invalid {
+                UIApplication.shared.endBackgroundTask(expiredId)
+            }
+        }
+        taskLock.lock()
+        activeTasks[taskId] = bgId
+        taskLock.unlock()
+        return taskId
+    }
+
+    private func endNativeTask(taskId: String) {
+        taskLock.lock()
+        let bgId = activeTasks.removeValue(forKey: taskId)
+        taskLock.unlock()
+        if let bgId = bgId, bgId != .invalid {
+            UIApplication.shared.endBackgroundTask(bgId)
+        }
+    }
+
+    @objc func startBackgroundTask(_ call: CAPPluginCall) {
+        let name = call.getString("name") ?? "DICOM-Task"
+        let taskId = beginNativeTask(name: name)
+        call.resolve(["taskId": taskId])
+    }
+
+    @objc func endBackgroundTask(_ call: CAPPluginCall) {
+        if let taskId = call.getString("taskId") {
+            endNativeTask(taskId: taskId)
+        }
+        call.resolve()
+    }
 
     private static let skipNames: Set<String> = [
         "dicomdir", "dirfile", "lockfile", "version", "autorun.inf", "thumbs.db", ".ds_store"
@@ -88,7 +142,11 @@ public class FolderPickerPlugin: CAPPlugin, CAPBridgedPlugin, UIDocumentPickerDe
             return
         }
         let suggestedName = call.getString("filename") ?? ""
+        let taskId = beginNativeTask(name: "DICOM-Download")
         DispatchQueue.global(qos: .userInitiated).async {
+            defer {
+                self.endNativeTask(taskId: taskId)
+            }
             do {
                 let (fileInfo, batchDir) = try self.fetchRemoteFile(url: url, suggestedName: suggestedName)
                 call.resolve(["files": [fileInfo], "batchDir": batchDir])
@@ -110,7 +168,11 @@ public class FolderPickerPlugin: CAPPlugin, CAPBridgedPlugin, UIDocumentPickerDe
             call.resolve(["files": [], "cancelled": true])
             return
         }
+        let taskId = beginNativeTask(name: "DICOM-Folder-Copy")
         DispatchQueue.global(qos: .userInitiated).async {
+            defer {
+                self.endNativeTask(taskId: taskId)
+            }
             do {
                 let (files, batchDir) = try self.copyPickedItems(urls)
                 call.resolve([

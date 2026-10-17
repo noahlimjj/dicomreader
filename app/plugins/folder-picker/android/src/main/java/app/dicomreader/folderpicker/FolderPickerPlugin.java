@@ -3,10 +3,12 @@ package app.dicomreader.folderpicker;
 import android.app.Activity;
 import android.content.ClipData;
 import android.content.ContentResolver;
+import android.content.Context;
 import android.content.Intent;
 import android.database.Cursor;
 import android.net.Uri;
 import android.os.Build;
+import android.os.PowerManager;
 import android.provider.DocumentsContract;
 import android.provider.OpenableColumns;
 import androidx.activity.result.ActivityResult;
@@ -35,6 +37,7 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
@@ -48,6 +51,60 @@ import java.util.concurrent.atomic.AtomicLong;
  */
 @CapacitorPlugin(name = "FolderPicker")
 public class FolderPickerPlugin extends Plugin {
+
+    private final ConcurrentHashMap<String, PowerManager.WakeLock> customWakeLocks = new ConcurrentHashMap<>();
+
+    private PowerManager.WakeLock acquireWakeLock(String tag) {
+        try {
+            PowerManager pm = (PowerManager) getContext().getSystemService(Context.POWER_SERVICE);
+            if (pm != null) {
+                PowerManager.WakeLock wl = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "DICOMReader:" + tag);
+                wl.acquire(10 * 60 * 1000L);
+                return wl;
+            }
+        } catch (Exception ignored) {}
+        return null;
+    }
+
+    private static void releaseWakeLock(PowerManager.WakeLock wl) {
+        if (wl != null && wl.isHeld()) {
+            try {
+                wl.release();
+            } catch (Exception ignored) {}
+        }
+    }
+
+    @PluginMethod
+    public void startBackgroundTask(PluginCall call) {
+        String name = call.getString("name", "DICOM-Task");
+        String id = UUID.randomUUID().toString();
+        PowerManager.WakeLock wl = acquireWakeLock(name);
+        if (wl != null) {
+            customWakeLocks.put(id, wl);
+        }
+        JSObject ret = new JSObject();
+        ret.put("taskId", id);
+        call.resolve(ret);
+    }
+
+    @PluginMethod
+    public void endBackgroundTask(PluginCall call) {
+        String id = call.getString("taskId");
+        if (id != null) {
+            PowerManager.WakeLock wl = customWakeLocks.remove(id);
+            releaseWakeLock(wl);
+        }
+        call.resolve();
+    }
+
+    @Override
+    protected void handleOnDestroy() {
+        for (PowerManager.WakeLock wl : customWakeLocks.values()) {
+            releaseWakeLock(wl);
+        }
+        customWakeLocks.clear();
+        super.handleOnDestroy();
+    }
 
     private static final Set<String> SKIP_NAMES = new HashSet<>(Arrays.asList(
         "dicomdir", "dirfile", "lockfile", "version", "autorun.inf", "thumbs.db", ".ds_store"
@@ -125,6 +182,7 @@ public class FolderPickerPlugin extends Plugin {
             return;
         }
         new Thread(() -> {
+            PowerManager.WakeLock wl = acquireWakeLock("Download");
             try {
                 File dest = makeBatchDir();
                 HttpURLConnection conn = (HttpURLConnection) new URL(urlStr).openConnection();
@@ -192,6 +250,8 @@ public class FolderPickerPlugin extends Plugin {
                 call.resolve(r);
             } catch (Exception e) {
                 call.reject("Could not download from link: " + e.getMessage(), e);
+            } finally {
+                releaseWakeLock(wl);
             }
         }).start();
     }
@@ -225,6 +285,7 @@ public class FolderPickerPlugin extends Plugin {
             return;
         }
         new Thread(() -> {
+            PowerManager.WakeLock wl = acquireWakeLock("FilesTransfer");
             try {
                 File dest = makeBatchDir();
                 ContentResolver resolver = getContext().getContentResolver();
@@ -296,6 +357,8 @@ public class FolderPickerPlugin extends Plugin {
                 call.resolve(r);
             } catch (Exception e) {
                 call.reject("Could not read selected files: " + e.getMessage(), e);
+            } finally {
+                releaseWakeLock(wl);
             }
         }).start();
     }
@@ -313,6 +376,7 @@ public class FolderPickerPlugin extends Plugin {
         }
         Uri tree = data.getData();
         new Thread(() -> {
+            PowerManager.WakeLock wl = acquireWakeLock("FolderTransfer");
             try {
                 File dest = makeBatchDir();
                 String rootId = DocumentsContract.getTreeDocumentId(tree);
@@ -406,6 +470,8 @@ public class FolderPickerPlugin extends Plugin {
                 call.resolve(r);
             } catch (Exception e) {
                 call.reject("Could not read the folder: " + e.getMessage(), e);
+            } finally {
+                releaseWakeLock(wl);
             }
         }).start();
     }

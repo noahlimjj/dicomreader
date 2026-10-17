@@ -194,5 +194,39 @@ export async function getNativeStudiesDir() {
   }
 }
 
+/**
+ * Request OS background execution time (UIBackgroundTaskIdentifier on iOS, WakeLock on Android)
+ * so long-running operations (like folder copying, slice indexing, and study library saving)
+ * continue running even if the user switches apps or locks the screen.
+ */
+export async function beginNativeBackgroundTask(name = 'DICOM-Task') {
+  if (!isNative) return null;
+  try {
+    const {registerPlugin} = await import('@capacitor/core');
+    const FolderPicker = registerPlugin('FolderPicker');
+    if (typeof FolderPicker.startBackgroundTask === 'function') {
+      const res = await FolderPicker.startBackgroundTask({name});
+      return res?.taskId || null;
+    }
+  } catch (e) {
+    console.warn('Could not start native background task', e);
+  }
+  return null;
+}
+
+/** End a previously started native background task. */
+export async function endNativeBackgroundTask(taskId) {
+  if (!isNative || !taskId) return;
+  try {
+    const {registerPlugin} = await import('@capacitor/core');
+    const FolderPicker = registerPlugin('FolderPicker');
+    if (typeof FolderPicker.endBackgroundTask === 'function') {
+      await FolderPicker.endBackgroundTask({taskId});
+    }
+  } catch (e) {
+    console.warn('Could not end native background task', e);
+  }
+}
+
 
 

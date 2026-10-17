@@ -10,7 +10,7 @@ import {attachGestures} from './view/gestures.js';
 import {minMaxWindow, percentileWindow, pixelValue, renderPixels, defaultWindow} from './view/render.js';
 import {MEASURE_TOOLS, newMeasurement, quantify, drawMeasurement, hitTest} from './view/measure.js';
 import {openMenu, closeMenu, isMenuOpen} from './ui/menu.js';
-import {initNative, shareBlob, isNative, platform, pickNativeFolder, pickNativeFiles, downloadNativeUrl, onNativeProgress} from './ui/native.js';
+import {initNative, shareBlob, isNative, platform, pickNativeFolder, pickNativeFiles, downloadNativeUrl, onNativeProgress, beginNativeBackgroundTask, endNativeBackgroundTask} from './ui/native.js';
 import {listSavedStudies, saveStudyToLibrary, updateSavedStudyMeta, loadSavedStudy, deleteSavedStudy, studyIdOf} from './model/library.js';
 import {canReconstructMpr, buildMprSeries} from './model/mpr.js';
 
@@ -104,42 +104,50 @@ async function openEntries(entries, label = '') {
   showEmpty(true);
   loader.clear();
   setProgress(`Reading ${entries.length} file${entries.length === 1 ? '' : 's'}…`, 0);
-  let done = 0;
-  const items = [];
-  const indexed = [];
-  let lastPaint = 0;
-  let failed = 0;
-  await Promise.all(entries.map((entry) => loader.index(entry).then((meta) => {
-    if (meta) {
-      entry.frames = meta.file.frames;
-      indexed.push({entry, meta});
-      items.push(...makeItems(entry, meta));
+  const bgTaskId = await beginNativeBackgroundTask('DICOM-Slice-Indexing');
+  try {
+    let done = 0;
+    const items = [];
+    const indexed = [];
+    let lastPaint = 0;
+    let failed = 0;
+    await Promise.all(entries.map((entry) => loader.index(entry).then((meta) => {
+      if (meta) {
+        entry.frames = meta.file.frames;
+        indexed.push({entry, meta});
+        items.push(...makeItems(entry, meta));
+      }
+    }, () => {
+      failed++;
+    }).finally(() => {
+      done++;
+      const now = performance.now();
+      if (now - lastPaint > 80 || done === entries.length) {
+        lastPaint = now;
+        setProgress(`Reading files… ${done} / ${entries.length}`, done / entries.length);
+      }
+    })));
+    setProgress(null);
+    if (!items.length) {
+      showEmpty(true);
+      toast(`No images found in ${entries.length} file${entries.length === 1 ? '' : 's'}${failed ? ' (they may not be DICOM)' : ''}.`);
+      return;
     }
-  }, () => {
-    failed++;
-  }).finally(() => {
-    done++;
-    const now = performance.now();
-    if (now - lastPaint > 80 || done === entries.length) {
-      lastPaint = now;
-      setProgress(`Reading files… ${done} / ${entries.length}`, done / entries.length);
+    state.sourceCount = entries.length;
+    state.lastIndexedEntries = indexed;
+    const series = groupSeries(items);
+    setStudy(series, label);
+    if (label !== 'sample') {
+      try {
+        const id = await saveStudyToLibrary(series, indexed, state.measurements);
+        state.activeStudyId = id;
+        toast('Study saved to library');
+      } catch (e) {
+        console.warn('Could not save to library', e);
+      }
     }
-  })));
-  setProgress(null);
-  if (!items.length) {
-    showEmpty(true);
-    toast(`No images found in ${entries.length} file${entries.length === 1 ? '' : 's'}${failed ? ' (they may not be DICOM)' : ''}.`);
-    return;
-  }
-  state.sourceCount = entries.length;
-  state.lastIndexedEntries = indexed;
-  const series = groupSeries(items);
-  setStudy(series, label);
-  if (label !== 'sample') {
-    saveStudyToLibrary(series, indexed, state.measurements).then((id) => {
-      state.activeStudyId = id;
-      toast('Study saved to library');
-    }).catch((e) => console.warn('Could not save to library', e));
+  } finally {
+    await endNativeBackgroundTask(bgTaskId);
   }
 }
 
@@ -1776,6 +1784,7 @@ async function pickFromGoogleDrive() {
     $('filesInput').click();
     return;
   }
+  const bgTask = await beginNativeBackgroundTask('DICOM-Drive-Picker');
   try {
     showEmpty(true);
     setProgress('Opening from Google Drive…', 0);
@@ -1790,6 +1799,8 @@ async function pickFromGoogleDrive() {
     setProgress(null);
     if (!state.series.length) showEmpty(true); else showEmpty(false);
     toast(e.message || String(e));
+  } finally {
+    await endNativeBackgroundTask(bgTask);
   }
 }
 
@@ -1805,6 +1816,7 @@ async function openGoogleDriveLink(input) {
   }
   closeSheet();
   state.timing = {start: performance.now()};
+  const bgTask = await beginNativeBackgroundTask('DICOM-Drive-Download');
   try {
     showEmpty(true);
     setProgress('Downloading from Google Drive…', 0);
@@ -1829,6 +1841,8 @@ async function openGoogleDriveLink(input) {
     setProgress(null);
     if (!state.series.length) showEmpty(true); else showEmpty(false);
     toast(`Could not download from Google Drive: ${e.message || e}. Try "Browse Google Drive files" instead.`);
+  } finally {
+    await endNativeBackgroundTask(bgTask);
   }
 }
 
@@ -2019,6 +2033,7 @@ async function pickFiles() {
     $('filesInput').click();
     return;
   }
+  const bgTask = await beginNativeBackgroundTask('DICOM-Pick-Files');
   try {
     showEmpty(true);
     setProgress('Copying files…', 0);
@@ -2033,6 +2048,8 @@ async function pickFiles() {
     setProgress(null);
     if (!state.series.length) showEmpty(true); else showEmpty(false);
     toast(e.message || String(e));
+  } finally {
+    await endNativeBackgroundTask(bgTask);
   }
 }
 
@@ -2043,6 +2060,7 @@ async function pickFolder() {
     $('folderInput').click();
     return;
   }
+  const bgTask = await beginNativeBackgroundTask('DICOM-Pick-Folder');
   try {
     showEmpty(true);
     setProgress('Copying the folder…', 0);
@@ -2057,6 +2075,8 @@ async function pickFolder() {
     setProgress(null);
     if (!state.series.length) showEmpty(true); else showEmpty(false);
     toast(e.message || String(e));
+  } finally {
+    await endNativeBackgroundTask(bgTask);
   }
 }
 
