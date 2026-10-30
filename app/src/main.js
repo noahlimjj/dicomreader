@@ -1226,7 +1226,8 @@ function onTap(v, x, y, e) {
     select(null);
     return;
   }
-  if (state.layout === 2 && !MEASURE_TOOLS[state.tool]) {
+  // a tap never draws a measurement, so it always moves the other view (scout)
+  if (state.layout === 2) {
     locate(v, x, y, {clamp: true});
   }
 }
@@ -1900,7 +1901,8 @@ function renderHelpPanel() {
       object of known size. Ratios of two distances are exact either way.</p>
     <h3>Privacy</h3>
     <p class="note">Images are read on this device and never uploaded. The app has no account, no tracking and no analytics.
-      Preferences (tool, calibrations) are stored only on this device.</p>
+      Preferences (tool, calibrations) are stored only on this device.
+      <a href="https://noahlimjj.github.io/dicomreader/privacy.html" target="_blank" rel="noopener" style="color:var(--accent-2)">Privacy policy</a></p>
     <h3>Not a medical device</h3>
     <p class="note">This viewer is for looking at your own images, for education and reference. It is not intended for diagnosis;
       diagnosis should come from your doctor's report. Compressed (lossy) images are marked LOSSY.</p>

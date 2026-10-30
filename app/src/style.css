@@ -710,8 +710,8 @@ input[type="range"] { width: 100%; accent-color: var(--accent-2); height: 32px; 
   text-overflow: ellipsis;
 }
 .saved-del {
-  width: 32px;
-  height: 32px;
+  width: 44px;
+  height: 44px;
   display: grid;
   place-items: center;
   border: 0;

@@ -267,6 +267,8 @@ export class Viewport {
   }
 
   toImage(sx, sy) {
+    // the ResizeObserver can lag a layout change (e.g. just after Two views), so measure now
+    this.resize();
     return apply(invert(this.matrix()), sx, sy);
   }
 
