@@ -1,0 +1,18 @@
+{
+ "name": "DICOM Mobile Viewer",
+ "app": "6823661555",
+ "version": "1.0.1",
+ "build": "121",
+ "subtitle": "CT, MRI & X-ray scans offline",
+ "keywords": "ct scan,mri,xray,x-ray,radiology,pacs,medical imaging,hospital cd,ultrasound,dcm,zip,localizer",
+ "promo": "Open your hospital CD or scan files and scroll through CT and MRI slices. Private and offline: nothing is uploaded.",
+ "description": "Open your hospital CD or scan files and look through them on your iPhone: scroll CT and MRI slices, adjust brightness and measure. Everything stays on your device.\n\nTry the built-in sample scan in one tap. No account, no ads, no uploads.\n\nKEY FEATURES:\n\u2022 Fast volume navigation: smoothly scroll through hundreds of CT and MRI slices.\n\u2022 Scout / localizer sync: reference lines show where each slice sits across axial, sagittal and coronal planes. Tap the scout to jump to a slice.\n\u2022 Two views side by side (e.g. scout next to axial, sagittal next to coronal) with linked locators.\n\u2022 Measurements: calibrated distances, elliptical ROI stats (area, mean, min/max HU, SD) and Cobb angles.\n\u2022 Wide DICOM support: uncompressed, RLE, JPEG Baseline/Lossless, JPEG 2000 and JPEG-LS, multi-frame series and cine playback.\n\u2022 100% private and offline: all parsing and rendering happens on your device. No accounts, no analytics, no tracking, no cloud uploads.\n\u2022 Flexible import: Files app, iCloud Drive, Google Drive, AirDrop, whole folders or .zip archives.\n\nDISCLAIMER:\nDICOM Mobile is for personal reference, research and education. It is not intended for primary diagnosis or treatment planning.",
+ "whatsNew": "\u2022 Text now follows your iPhone text size\n\u2022 Clearer messages when a file can't be opened\n\u2022 Easier-to-read home screen and bigger buttons\n\u2022 New app icon",
+ "shotType": "APP_IPHONE_67",
+ "shots": [
+  "/Users/noah/scratch-asc/polish/dicom/1-measure.png",
+  "/Users/noah/scratch-asc/polish/dicom/2-two-views.png",
+  "/Users/noah/scratch-asc/polish/dicom/3-start.png",
+  "/Users/noah/scratch-asc/polish/dicom/4-series.png"
+ ]
+}
