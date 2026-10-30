@@ -157,7 +157,7 @@
             </div>
             <div class="hero-badge">
               <svg><use href="#i-shield"/></svg>
-              <span>Clinical DICOM · 100% On-Device</span>
+              <span>Private · 100% On-Device</span>
             </div>
             <h1>DICOM Mobile</h1>
             <p class="lead">Look through CT, MRI, X-ray and ultrasound scans: scroll through slices, adjust brightness, measure.</p>
@@ -204,7 +204,7 @@
               <span class="act-icon sample-icon"><svg><use href="#i-presets"/></svg></span>
               <span class="act-body">
                 <span class="act-title">Try a sample scan</span>
-                <span class="act-sub">Axial head CT study (16 slices)</span>
+                <span class="act-sub">Practice on a synthetic head CT</span>
               </span>
             </button>
           </div>
@@ -213,10 +213,6 @@
             <li class="tip-card">
               <span class="tip-icon"><svg><use href="#i-shield"/></svg></span>
               <span><b>Private:</b> your images are read on this device and never uploaded.</span>
-            </li>
-            <li class="tip-card">
-              <span class="tip-icon"><svg><use href="#i-open"/></svg></span>
-              <span>Open a whole folder (e.g. a hospital CD copied to your phone), pick files or a <b>.zip</b>, or choose directly from <b>Google Drive</b>.</span>
             </li>
             <li class="tip-card desk-only">
               <span class="tip-icon"><svg><use href="#i-arrow"/></svg></span>
@@ -228,7 +224,7 @@
             </li>
           </ul>
         </div>
-        <div id="toast" class="toast" hidden></div>
+        <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
         <div id="loupe" class="loupe" hidden><canvas width="240" height="240"></canvas><div class="loupe-val"></div></div>
       </main>
 

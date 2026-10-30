@@ -99,7 +99,7 @@ function setProgress(msg, fraction) {
 
 async function openEntries(entries, label = '') {
   if (!entries.length) {
-    toast('No DICOM files found there.');
+    toast('No scans found there. Pick DICOM (.dcm) files, a .zip, or the folder from a hospital CD.');
     return;
   }
   showEmpty(true);
@@ -131,7 +131,7 @@ async function openEntries(entries, label = '') {
     setProgress(null);
     if (!items.length) {
       showEmpty(true);
-      toast(`No images found in ${entries.length} file${entries.length === 1 ? '' : 's'}${failed ? ' (they may not be DICOM)' : ''}.`);
+      toast(`Couldn't show ${entries.length === 1 ? 'that file' : `those ${entries.length} files`}${failed ? `: ${entries.length === 1 ? "it doesn't look like a DICOM scan" : "they don't look like DICOM scans"}` : ': no images inside'}. Try the whole study folder or .zip.`);
       return;
     }
     state.sourceCount = entries.length;
@@ -1670,7 +1670,7 @@ async function renderTagsPanel(fresh = false) {
   if (!body.querySelector('#tagFilter')) {
     body.innerHTML = `<div class="row" style="position:sticky;top:0;background:var(--panel);margin:0;padding:6px 0">
       <input id="tagFilter" type="search" placeholder="Filter tags…" style="flex:1"></div>
-      <div id="tagsFile" class="muted" style="font-size:12px"></div><table class="tags-table" id="tagsTable"></table>`;
+      <div id="tagsFile" class="muted" style="font-size:min(0.7059rem,24px)"></div><table class="tags-table" id="tagsTable"></table>`;
     body.querySelector('#tagFilter').addEventListener('input', () => drawTags());
   }
   body.querySelector('#tagFilter').value = filterValue;
@@ -1778,7 +1778,7 @@ function renderDrivePanel() {
       <input id="driveUrlInput" type="text" placeholder="https://drive.google.com/file/d/…" autocomplete="off" spellcheck="false">
       <button id="driveUrlBtn" class="btn primary small">Open link</button>
     </div>
-    <p class="muted" style="font-size:12px">Tip: You can also open the Google Drive app, tap <b>⋯ → Open in</b> on any <b>.zip</b> or <b>.dcm</b> file, and choose <b>DICOM Mobile</b>.</p>`;
+    <p class="muted" style="font-size:min(0.7059rem,24px)">Tip: You can also open the Google Drive app, tap <b>⋯ → Open in</b> on any <b>.zip</b> or <b>.dcm</b> file, and choose <b>DICOM Mobile</b>.</p>`;
   body.querySelector('#driveBrowseBtn').addEventListener('click', () => {
     closeSheet();
     pickFromGoogleDrive();
@@ -1907,7 +1907,7 @@ function renderHelpPanel() {
     <h3>Open source</h3>
     <p class="note">Built with dicom-parser, OpenJPEG, CharLS, libjpeg-turbo, OpenJPH, jpeg-lossless-decoder-js, pdf.js (JPEG),
       pako, zip.js and Capacitor. <a href="${BASE}licenses.txt" target="_blank" rel="noopener" style="color:var(--accent-2)">Licences</a></p>
-    <p class="muted" style="font-size:12px">Version ${import.meta.env.VITE_APP_VERSION || 'dev'} · ${platform}</p>`;
+    <p class="muted" style="font-size:min(0.7059rem,24px)">Version ${import.meta.env.VITE_APP_VERSION || 'dev'} · ${platform}</p>`;
 }
 
 async function renderSavedSheet() {
@@ -2011,7 +2011,7 @@ function toast(msg) {
   t.textContent = msg;
   t.hidden = false;
   clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => { t.hidden = true; }, 4500);
+  toastTimer = setTimeout(() => { t.hidden = true; }, Math.max(4500, msg.length * 70));
 }
 
 function escapeHtml(s) {
