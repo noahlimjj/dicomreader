@@ -21,3 +21,12 @@ node_modules/
 
 # the bundled sample is a synthetic phantom (app/test/tools/make_sample.py), not patient data
 !app/public/samples/*.dcm
+
+# secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.p8
+*.p12
+*.key
